@@ -1,0 +1,74 @@
+name: api-monitor
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: quota_guard
+      POSTGRES_USER: quota_guard
+      POSTGRES_PASSWORD: quota_guard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quota_guard -d quota_guard"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    image: api-monitor:local
+    build: .
+    command: ["api"]
+    environment:
+      APP_ENV: production
+      APP_SECRET: ${APP_SECRET:-change-me-at-least-32-characters}
+      HTTP_ADDR: :8080
+      DATABASE_URL: postgres://quota_guard:quota_guard@postgres:5432/quota_guard?sslmode=disable
+      REDIS_ADDR: redis:6379
+      DEFAULT_SCAN_INTERVAL_SECONDS: 60
+      STATIC_DIR: web/dist
+      GITHUB_REPO: ${GITHUB_REPO:-baogutang/api-monitor}
+      ENABLE_SELF_UPDATE: ${ENABLE_SELF_UPDATE:-false}
+      UPDATE_COMMAND: ${UPDATE_COMMAND:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: api-monitor:local
+    build: .
+    command: ["worker"]
+    environment:
+      APP_ENV: production
+      APP_SECRET: ${APP_SECRET:-change-me-at-least-32-characters}
+      DATABASE_URL: postgres://quota_guard:quota_guard@postgres:5432/quota_guard?sslmode=disable
+      REDIS_ADDR: redis:6379
+      DEFAULT_SCAN_INTERVAL_SECONDS: 60
+      GITHUB_REPO: ${GITHUB_REPO:-baogutang/api-monitor}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

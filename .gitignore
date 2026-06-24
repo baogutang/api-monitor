@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.env.local
+/bin/
+/dist/
+/tmp/
+/.gocache/
+/coverage.out
+node_modules/
+web/node_modules/
+web/dist/

@@ -1,0 +1,330 @@
+openapi: 3.0.3
+info:
+  title: API Monitor API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      security: []
+      responses:
+        "200":
+          description: Health status
+  /api/v1/setup/status:
+    get:
+      security: []
+      responses:
+        "200":
+          description: First-run setup status
+  /api/v1/setup:
+    post:
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetupRequest"
+      responses:
+        "201":
+          description: Admin user and token
+  /api/v1/auth/login:
+    post:
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Token and user
+  /api/v1/auth/me:
+    get:
+      responses:
+        "200":
+          description: Current user
+  /api/v1/dashboard/summary:
+    get:
+      responses:
+        "200":
+          description: Dashboard summary
+  /api/v1/instances:
+    get:
+      responses:
+        "200":
+          description: List upstream instances
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertInstanceRequest"
+      responses:
+        "200":
+          description: Saved instance
+  /api/v1/instances/{id}:
+    get:
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Instance
+    patch:
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertInstanceRequest"
+      responses:
+        "200":
+          description: Updated instance
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204":
+          description: Deleted
+  /api/v1/instances/{id}/test:
+    post:
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Provider probe result
+  /api/v1/instances/{id}/discover:
+    post:
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Discovered targets
+  /api/v1/targets:
+    get:
+      parameters:
+        - name: providerKind
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: groupName
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List monitored targets
+  /api/v1/targets/{id}:
+    get:
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Target
+    patch:
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                groupName:
+                  type: string
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated target
+  /api/v1/targets/{id}/scan:
+    post:
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Updated target after scan
+  /api/v1/targets/{id}/snapshots:
+    get:
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: range
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+      responses:
+        "200":
+          description: Target snapshots
+  /api/v1/alert-rules:
+    get:
+      responses:
+        "200":
+          description: List alert rules
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertRule"
+      responses:
+        "200":
+          description: Saved alert rule
+  /api/v1/alerts:
+    get:
+      responses:
+        "200":
+          description: List alerts
+  /api/v1/notification-channels:
+    get:
+      responses:
+        "200":
+          description: List notification channels
+    post:
+      responses:
+        "200":
+          description: Saved notification channel
+  /api/v1/scan-runs:
+    get:
+      responses:
+        "200":
+          description: List scan runs
+  /api/v1/settings:
+    get:
+      responses:
+        "200":
+          description: Dynamic system settings
+    patch:
+      responses:
+        "200":
+          description: Updated settings
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    SetupRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+        password:
+          type: string
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+    UpsertInstanceRequest:
+      type: object
+      required: [name, providerKind]
+      properties:
+        name:
+          type: string
+        providerKind:
+          type: string
+          enum:
+            - newapi_user
+            - newapi_token
+            - sub2api_user
+            - sub2api_token
+            - openai_admin
+            - openai_key
+            - anthropic_key
+            - manual_subscription
+            - generic_http
+        baseUrl:
+          type: string
+        groupName:
+          type: string
+        enabled:
+          type: boolean
+        scanIntervalSeconds:
+          type: integer
+        capabilities:
+          type: array
+          items:
+            type: string
+        settings:
+          type: object
+        credential:
+          $ref: "#/components/schemas/Credential"
+    Credential:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [bearer, api_key, basic, json, none]
+        value:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        json:
+          type: object
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+    AlertRule:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        scopeType:
+          type: string
+        scopeValue:
+          type: string
+        severity:
+          type: string
+        conditionType:
+          type: string
+        thresholdValue:
+          type: number
+        thresholdUnit:
+          type: string
+        sustainCount:
+          type: integer
+        cooldownSeconds:
+          type: integer
+        notificationChannelIds:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
