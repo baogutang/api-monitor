@@ -544,6 +544,33 @@ func (s *Store) ListSnapshots(ctx context.Context, targetID string, since time.T
 	return snapshots, rows.Err()
 }
 
+func (s *Store) ListRecentSnapshots(ctx context.Context, targetID string, limit int) ([]domain.Snapshot, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 2
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT id, target_id, captured_at, status, balance_amount, balance_currency, quota_used, quota_total,
+			quota_remaining, quota_unit, monthly_cost_amount, monthly_cost_currency, raw
+		FROM balance_snapshots
+		WHERE target_id=$1
+		ORDER BY captured_at DESC
+		LIMIT $2
+	`, targetID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var snapshots []domain.Snapshot
+	for rows.Next() {
+		snapshot, err := scanSnapshot(rows)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	return snapshots, rows.Err()
+}
+
 func targetSelectSQL(where string) string {
 	return `SELECT id, instance_id, provider_kind, kind, name, external_id, group_name, key_fingerprint,
 		capabilities, status, balance_amount, balance_currency, quota_used, quota_total, quota_remaining,

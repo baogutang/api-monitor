@@ -80,10 +80,22 @@ func (c *newAPIUserConnector) Discover(ctx context.Context, instance domain.Inst
 			})
 		}
 	}
+	targets = append(targets, newAPIWatchTargets(instance)...)
 	return targets, nil
 }
 
 func (c *newAPIUserConnector) Scan(ctx context.Context, instance domain.Instance, target domain.MonitorTarget) (*domain.ScanResult, error) {
+	if isWatchTarget(target.Kind) {
+		headers := map[string]string{}
+		if target.Kind != domain.TargetAnnouncement && target.Kind != domain.TargetPricing {
+			var authErr error
+			headers, _, authErr = newAPIUserHeaders(ctx, c.client, instance)
+			if authErr != nil {
+				return &domain.ScanResult{Status: flexibleStatus(authErr), Error: authErr.Error()}, authErr
+			}
+		}
+		return scanNewAPIWatch(ctx, c.client, instance, target, headers)
+	}
 	if target.Kind == domain.TargetAPIKey {
 		headers, _, authErr := newAPIUserHeaders(ctx, c.client, instance)
 		if authErr != nil {

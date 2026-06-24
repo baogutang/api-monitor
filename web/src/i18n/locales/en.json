@@ -219,7 +219,14 @@
     "cost": "Cost",
     "health": "Health",
     "window_quota": "Quota window",
-    "manual_plan": "Manual plan"
+    "manual_plan": "Manual plan",
+    "announcement": "Announcement",
+    "news": "News",
+    "deprecation": "Deprecation",
+    "group_catalog": "Group catalog",
+    "model_catalog": "Model catalog",
+    "pricing_catalog": "Pricing",
+    "change_watch": "Change watch"
   },
   "provider": {
     "newapi_user": "New API user",
@@ -241,7 +248,13 @@
     "subscription": "Subscription",
     "project": "Project",
     "organization": "Organization",
-    "endpoint": "Endpoint"
+    "endpoint": "Endpoint",
+    "announcement_feed": "Announcements",
+    "news_feed": "Official news",
+    "deprecation_feed": "Model deprecations",
+    "group_catalog": "Groups & rates",
+    "model_catalog": "Model catalog",
+    "pricing_catalog": "Pricing catalog"
   },
   "channelType": {
     "dingtalk": "DingTalk",
@@ -263,7 +276,14 @@
     "scan_failures_gte": "Scan failures ≥",
     "health_not_healthy": "Health not healthy",
     "monthly_cost_above": "Monthly cost above",
-    "cost_spike_percent_above": "Cost spike percent above"
+    "cost_spike_percent_above": "Cost spike percent above",
+    "announcement_changed": "Upstream announcement changed",
+    "news_changed": "Official news changed",
+    "deprecation_changed": "Model deprecation changed",
+    "group_catalog_changed": "Group/rate catalog changed",
+    "model_catalog_changed": "Model catalog changed",
+    "pricing_changed": "Pricing changed",
+    "source_changed": "Watched source changed"
   },
   "errors": {
     "loadFailed": "Failed to load",

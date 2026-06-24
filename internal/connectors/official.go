@@ -81,7 +81,7 @@ func (c *openAIKeyConnector) Discover(ctx context.Context, instance domain.Insta
 	if key == "" {
 		return nil, errMissingCredential()
 	}
-	return []domain.MonitorTarget{{
+	targets := []domain.MonitorTarget{{
 		InstanceID:     instance.ID,
 		ProviderKind:   instance.ProviderKind,
 		Kind:           domain.TargetAPIKey,
@@ -92,10 +92,15 @@ func (c *openAIKeyConnector) Discover(ctx context.Context, instance domain.Insta
 		Capabilities:   capabilities(domain.CapabilityHealth),
 		Status:         domain.StatusUnknown,
 		Enabled:        true,
-	}}, nil
+	}}
+	targets = append(targets, officialWatchTargets(instance, "openai", instance.ProviderKind)...)
+	return targets, nil
 }
 
 func (c *openAIKeyConnector) Scan(ctx context.Context, instance domain.Instance, target domain.MonitorTarget) (*domain.ScanResult, error) {
+	if isWatchTarget(target.Kind) {
+		return scanOfficialWatch(ctx, c.client, instance, "openai", target)
+	}
 	raw, _, err := c.models(ctx, instance)
 	if err != nil {
 		return &domain.ScanResult{Status: flexibleStatus(err), Error: err.Error(), Raw: raw}, err
@@ -127,7 +132,7 @@ func (c *anthropicKeyConnector) Discover(ctx context.Context, instance domain.In
 	if key == "" {
 		return nil, errMissingCredential()
 	}
-	return []domain.MonitorTarget{{
+	targets := []domain.MonitorTarget{{
 		InstanceID:     instance.ID,
 		ProviderKind:   instance.ProviderKind,
 		Kind:           domain.TargetAPIKey,
@@ -138,10 +143,15 @@ func (c *anthropicKeyConnector) Discover(ctx context.Context, instance domain.In
 		Capabilities:   capabilities(domain.CapabilityHealth),
 		Status:         domain.StatusUnknown,
 		Enabled:        true,
-	}}, nil
+	}}
+	targets = append(targets, officialWatchTargets(instance, "anthropic", instance.ProviderKind)...)
+	return targets, nil
 }
 
 func (c *anthropicKeyConnector) Scan(ctx context.Context, instance domain.Instance, target domain.MonitorTarget) (*domain.ScanResult, error) {
+	if isWatchTarget(target.Kind) {
+		return scanOfficialWatch(ctx, c.client, instance, "anthropic", target)
+	}
 	raw, _, err := c.models(ctx, instance)
 	if err != nil {
 		return &domain.ScanResult{Status: flexibleStatus(err), Error: err.Error(), Raw: raw}, err

@@ -83,6 +83,12 @@ const templateVars = [
   "balance",
   "quota",
   "health",
+  "targetKind",
+  "changeType",
+  "changeTitle",
+  "changeSummary",
+  "changeUrl",
+  "changeFingerprint",
 ];
 
 const variableDescriptions = [
@@ -97,6 +103,12 @@ const variableDescriptions = [
   ["balance", "当前余额", "$8.42"],
   ["quota", "剩余额度", "2.1%"],
   ["health", "健康状态", "critical / degraded / healthy"],
+  ["targetKind", "资产类型", "announcement_feed / model_catalog"],
+  ["changeType", "变更类型", "announcement_feed / pricing_catalog"],
+  ["changeTitle", "变更标题", "GPT-4.1 pricing updated"],
+  ["changeSummary", "变更摘要", "官方价格页面内容已更新"],
+  ["changeUrl", "来源链接", "https://developers.openai.com/api/docs/pricing"],
+  ["changeFingerprint", "内容指纹", "a3f5..."],
 ];
 
 const defaultTemplates: Record<TemplateKey, string> = {
@@ -123,6 +135,8 @@ const defaultTemplates: Record<TemplateKey, string> = {
 | 资产 | {{targetName}} |
 | 上游 | {{provider}} |
 | 分组 | {{group}} |
+| 变更 | {{changeTitle}} |
+| 来源 | {{changeUrl}} |
 | 余额 | {{balance}} |
 | 额度 | {{quota}} |
 | 时间 | {{openedAt}} |

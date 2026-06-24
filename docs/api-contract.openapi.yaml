@@ -260,6 +260,9 @@ components:
             - newapi_token
             - sub2api_user
             - sub2api_token
+            - openai_account
+            - gemini_account
+            - anthropic_account
             - openai_admin
             - openai_key
             - anthropic_key
@@ -286,7 +289,7 @@ components:
       properties:
         type:
           type: string
-          enum: [bearer, api_key, basic, json, none]
+          enum: [bearer, api_key, basic, json, oauth, session, cookie, none]
         value:
           type: string
         username:
@@ -314,6 +317,20 @@ components:
           type: string
         conditionType:
           type: string
+          enum:
+            - balance_below
+            - remaining_quota_below
+            - remaining_percent_below
+            - days_until_expiry_below
+            - health_not_healthy
+            - monthly_cost_above
+            - announcement_changed
+            - news_changed
+            - deprecation_changed
+            - group_catalog_changed
+            - model_catalog_changed
+            - pricing_changed
+            - source_changed
         thresholdValue:
           type: number
         thresholdUnit:

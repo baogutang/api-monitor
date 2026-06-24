@@ -31,17 +31,30 @@ const (
 	TargetProject      TargetKind = "project"
 	TargetOrganization TargetKind = "organization"
 	TargetEndpoint     TargetKind = "endpoint"
+	TargetAnnouncement TargetKind = "announcement_feed"
+	TargetNewsFeed     TargetKind = "news_feed"
+	TargetDeprecation  TargetKind = "deprecation_feed"
+	TargetGroupCatalog TargetKind = "group_catalog"
+	TargetModelCatalog TargetKind = "model_catalog"
+	TargetPricing      TargetKind = "pricing_catalog"
 )
 
 type Capability string
 
 const (
-	CapabilityBalance     Capability = "balance"
-	CapabilityUsage       Capability = "usage"
-	CapabilityCost        Capability = "cost"
-	CapabilityHealth      Capability = "health"
-	CapabilityWindowQuota Capability = "window_quota"
-	CapabilityManualPlan  Capability = "manual_plan"
+	CapabilityBalance      Capability = "balance"
+	CapabilityUsage        Capability = "usage"
+	CapabilityCost         Capability = "cost"
+	CapabilityHealth       Capability = "health"
+	CapabilityWindowQuota  Capability = "window_quota"
+	CapabilityManualPlan   Capability = "manual_plan"
+	CapabilityAnnouncement Capability = "announcement"
+	CapabilityNews         Capability = "news"
+	CapabilityDeprecation  Capability = "deprecation"
+	CapabilityGroupCatalog Capability = "group_catalog"
+	CapabilityModelCatalog Capability = "model_catalog"
+	CapabilityPricing      Capability = "pricing_catalog"
+	CapabilityChangeWatch  Capability = "change_watch"
 )
 
 type HealthStatus string

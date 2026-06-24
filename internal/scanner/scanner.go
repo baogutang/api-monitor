@@ -173,10 +173,23 @@ func (s *Service) EvaluateRules(ctx context.Context, target domain.MonitorTarget
 		return err
 	}
 	for _, rule := range rules {
-		if !rule.Enabled || !ruleMatchesTarget(rule, target) || !conditionMet(rule, target) {
+		if !rule.Enabled || !ruleMatchesTarget(rule, target) {
 			continue
 		}
-		if existing, err := s.store.FindOpenAlert(ctx, target.ID, rule.ID); err == nil && existing != nil {
+		matched, err := s.conditionMet(ctx, rule, target)
+		if err != nil {
+			s.logger.Warn("evaluate rule condition failed", "rule_id", rule.ID, "target_id", target.ID, "error", err)
+			continue
+		}
+		if !matched {
+			continue
+		}
+		if !isChangeCondition(rule.ConditionType) {
+			if existing, err := s.store.FindOpenAlert(ctx, target.ID, rule.ID); err == nil && existing != nil {
+				continue
+			}
+		}
+		if isChangeCondition(rule.ConditionType) && !s.changeCooldownElapsed(ctx, target.ID, rule.ID, rule.CooldownSeconds) {
 			continue
 		}
 		alert, err := s.store.CreateAlert(ctx, domain.AlertEvent{
@@ -184,7 +197,7 @@ func (s *Service) EvaluateRules(ctx context.Context, target domain.MonitorTarget
 			RuleID:   rule.ID,
 			Severity: rule.Severity,
 			Status:   "open",
-			Title:    fmt.Sprintf("%s: %s", rule.Severity, target.Name),
+			Title:    alertTitle(rule, target),
 			Message:  alertMessage(rule, target),
 		})
 		if err != nil {
@@ -238,32 +251,166 @@ func ruleMatchesTarget(rule domain.AlertRule, target domain.MonitorTarget) bool 
 	}
 }
 
-func conditionMet(rule domain.AlertRule, target domain.MonitorTarget) bool {
+func (s *Service) conditionMet(ctx context.Context, rule domain.AlertRule, target domain.MonitorTarget) (bool, error) {
 	switch rule.ConditionType {
 	case "balance_below":
-		return target.Balance != nil && target.Balance.Amount < rule.ThresholdValue
+		return target.Balance != nil && target.Balance.Amount < rule.ThresholdValue, nil
 	case "remaining_quota_below":
-		return target.Quota != nil && target.Quota.Remaining != nil && *target.Quota.Remaining < rule.ThresholdValue
+		return target.Quota != nil && target.Quota.Remaining != nil && *target.Quota.Remaining < rule.ThresholdValue, nil
 	case "remaining_percent_below":
 		if target.Quota == nil || target.Quota.Remaining == nil || target.Quota.Total == nil || *target.Quota.Total == 0 {
-			return false
+			return false, nil
 		}
-		return (*target.Quota.Remaining / *target.Quota.Total * 100) < rule.ThresholdValue
+		return (*target.Quota.Remaining / *target.Quota.Total * 100) < rule.ThresholdValue, nil
 	case "days_until_expiry_below":
 		if target.Plan == nil || target.Plan.ExpireAt == nil {
+			return false, nil
+		}
+		return time.Until(*target.Plan.ExpireAt).Hours()/24 < rule.ThresholdValue, nil
+	case "health_not_healthy":
+		return target.Status != domain.StatusHealthy, nil
+	case "monthly_cost_above":
+		return target.MonthlyCost != nil && target.MonthlyCost.Amount > rule.ThresholdValue, nil
+	case "announcement_changed":
+		return s.watchFingerprintChanged(ctx, target, domain.CapabilityAnnouncement)
+	case "news_changed":
+		return s.watchFingerprintChanged(ctx, target, domain.CapabilityNews)
+	case "deprecation_changed":
+		return s.watchFingerprintChanged(ctx, target, domain.CapabilityDeprecation)
+	case "group_catalog_changed":
+		return s.watchFingerprintChanged(ctx, target, domain.CapabilityGroupCatalog)
+	case "model_catalog_changed":
+		return s.watchFingerprintChanged(ctx, target, domain.CapabilityModelCatalog)
+	case "pricing_changed":
+		return s.watchFingerprintChanged(ctx, target, domain.CapabilityPricing)
+	case "source_changed":
+		return s.watchFingerprintChanged(ctx, target, domain.CapabilityChangeWatch)
+	default:
+		return false, nil
+	}
+}
+
+func (s *Service) watchFingerprintChanged(ctx context.Context, target domain.MonitorTarget, capability domain.Capability) (bool, error) {
+	if !targetHasCapability(target, capability) && !targetHasCapability(target, domain.CapabilityChangeWatch) {
+		return false, nil
+	}
+	current := rawString(target.Raw, "fingerprint")
+	if current == "" {
+		return false, nil
+	}
+	snapshots, err := s.store.ListRecentSnapshots(ctx, target.ID, 2)
+	if err != nil {
+		return false, err
+	}
+	if len(snapshots) < 2 {
+		return false, nil
+	}
+	previous := rawString(snapshots[1].Raw, "fingerprint")
+	return previous != "" && previous != current, nil
+}
+
+func (s *Service) changeCooldownElapsed(ctx context.Context, targetID, ruleID string, cooldownSeconds int) bool {
+	if cooldownSeconds <= 0 {
+		return true
+	}
+	alerts, err := s.store.ListAlertsForTarget(ctx, targetID, 50)
+	if err != nil {
+		return true
+	}
+	cutoff := time.Now().UTC().Add(-time.Duration(cooldownSeconds) * time.Second)
+	for _, alert := range alerts {
+		if alert.RuleID == ruleID && alert.OpenedAt.After(cutoff) {
 			return false
 		}
-		return time.Until(*target.Plan.ExpireAt).Hours()/24 < rule.ThresholdValue
-	case "health_not_healthy":
-		return target.Status != domain.StatusHealthy
-	case "monthly_cost_above":
-		return target.MonthlyCost != nil && target.MonthlyCost.Amount > rule.ThresholdValue
+	}
+	return true
+}
+
+func targetHasCapability(target domain.MonitorTarget, capability domain.Capability) bool {
+	for _, current := range target.Capabilities {
+		if current == capability {
+			return true
+		}
+	}
+	return false
+}
+
+func isChangeCondition(condition string) bool {
+	switch condition {
+	case "announcement_changed", "news_changed", "deprecation_changed", "group_catalog_changed", "model_catalog_changed", "pricing_changed", "source_changed":
+		return true
 	default:
 		return false
 	}
 }
 
+func rawString(raw json.RawMessage, key string) string {
+	var object map[string]any
+	if len(raw) == 0 {
+		return ""
+	}
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return ""
+	}
+	if value, ok := object[key].(string); ok {
+		return value
+	}
+	return ""
+}
+
+func alertTitle(rule domain.AlertRule, target domain.MonitorTarget) string {
+	if isChangeCondition(rule.ConditionType) {
+		if latest := latestWatchTitle(target.Raw); latest != "" {
+			return fmt.Sprintf("%s: %s updated", rule.Severity, latest)
+		}
+		return fmt.Sprintf("%s: %s changed", rule.Severity, target.Name)
+	}
+	return fmt.Sprintf("%s: %s", rule.Severity, target.Name)
+}
+
 func alertMessage(rule domain.AlertRule, target domain.MonitorTarget) string {
+	if isChangeCondition(rule.ConditionType) {
+		title, summary, sourceURL, fingerprint := latestWatchInfo(target.Raw)
+		return fmt.Sprintf("Rule `%s` detected `%s` on `%s`.\nLatest: %s\nSummary: %s\nSource: %s\nFingerprint: %s",
+			rule.Name, rule.ConditionType, target.Name, fallback(title, target.Name), fallback(summary, "-"), fallback(sourceURL, "-"), fallback(fingerprint, "-"))
+	}
 	return fmt.Sprintf("Rule `%s` matched `%s`; condition `%s` threshold %.4f %s.",
 		rule.Name, target.Name, rule.ConditionType, rule.ThresholdValue, rule.ThresholdUnit)
+}
+
+func latestWatchInfo(raw json.RawMessage) (title, summary, sourceURL, fingerprint string) {
+	var object map[string]any
+	if len(raw) == 0 {
+		return "", "", "", ""
+	}
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return "", "", "", ""
+	}
+	sourceURL, _ = object["sourceUrl"].(string)
+	fingerprint, _ = object["fingerprint"].(string)
+	summary, _ = object["summary"].(string)
+	if items, ok := object["items"].([]any); ok && len(items) > 0 {
+		if first, ok := items[0].(map[string]any); ok {
+			title, _ = first["title"].(string)
+			if itemSummary, ok := first["summary"].(string); ok && itemSummary != "" {
+				summary = itemSummary
+			}
+			if itemURL, ok := first["url"].(string); ok && itemURL != "" {
+				sourceURL = itemURL
+			}
+		}
+	}
+	return title, summary, sourceURL, fingerprint
+}
+
+func latestWatchTitle(raw json.RawMessage) string {
+	title, _, _, _ := latestWatchInfo(raw)
+	return title
+}
+
+func fallback(value, alt string) string {
+	if value != "" {
+		return value
+	}
+	return alt
 }

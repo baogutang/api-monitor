@@ -29,6 +29,9 @@ func (c *openAIAccountConnector) Discover(ctx context.Context, instance domain.I
 }
 
 func (c *openAIAccountConnector) Scan(ctx context.Context, instance domain.Instance, target domain.MonitorTarget) (*domain.ScanResult, error) {
+	if isWatchTarget(target.Kind) {
+		return scanOfficialWatch(ctx, c.client, instance, "openai", target)
+	}
 	return officialAccountScan(ctx, c.client, instance, "openai", nil, c.probe)
 }
 
@@ -59,6 +62,9 @@ func (c *geminiAccountConnector) Discover(ctx context.Context, instance domain.I
 }
 
 func (c *geminiAccountConnector) Scan(ctx context.Context, instance domain.Instance, target domain.MonitorTarget) (*domain.ScanResult, error) {
+	if isWatchTarget(target.Kind) {
+		return scanOfficialWatch(ctx, c.client, instance, "gemini", target)
+	}
 	return officialAccountScan(ctx, c.client, instance, "gemini", nil, c.probe)
 }
 
@@ -92,6 +98,9 @@ func (c *anthropicAccountConnector) Discover(ctx context.Context, instance domai
 }
 
 func (c *anthropicAccountConnector) Scan(ctx context.Context, instance domain.Instance, target domain.MonitorTarget) (*domain.ScanResult, error) {
+	if isWatchTarget(target.Kind) {
+		return scanOfficialWatch(ctx, c.client, instance, "anthropic", target)
+	}
 	return officialAccountScan(ctx, c.client, instance, "anthropic", nil, c.probe)
 }
 
@@ -145,7 +154,7 @@ func officialAccountTargets(instance domain.Instance, provider string, kind doma
 	windows := configuredUsageWindows(instance, defaults)
 	meta := officialCredentialMeta(instance)
 	name := firstNonEmpty(stringFromJSON(meta, "email", "name", "project_id", "org_uuid"), instance.Name)
-	return []domain.MonitorTarget{{
+	targets := []domain.MonitorTarget{{
 		InstanceID:   instance.ID,
 		ProviderKind: kind,
 		Kind:         domain.TargetUser,
@@ -159,6 +168,8 @@ func officialAccountTargets(instance domain.Instance, provider string, kind doma
 		Raw:          officialRaw(instance, provider, windows, nil, nil),
 		Enabled:      true,
 	}}
+	targets = append(targets, officialWatchTargets(instance, provider, kind)...)
+	return targets
 }
 
 func officialAccountScan(ctx context.Context, client *http.Client, instance domain.Instance, provider string, defaults []map[string]any, probe officialProbeFunc) (*domain.ScanResult, error) {

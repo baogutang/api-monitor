@@ -146,6 +146,7 @@ export function AssetDetailDrawer({
                   resetLabel={resolvedLocale === "en" ? "reset" : "重置"}
                   nowLabel={resolvedLocale === "en" ? "now" : "现在"}
                 />
+                <WatchPreview target={target.data} locale={resolvedLocale} />
                 {target.data.keyFingerprint && (
                   <div className="text-xs text-text-4">
                     {t("common.fingerprint")}:{" "}
@@ -253,6 +254,90 @@ export function AssetDetailDrawer({
       <div className="drawer">{content}</div>
     </>
   );
+}
+
+function WatchPreview({
+  target,
+  locale,
+}: {
+  target: MonitorTarget;
+  locale: string;
+}) {
+  if (!isWatchKind(target.kind)) return null;
+  const raw = target.raw ?? {};
+  const items = Array.isArray(raw.items)
+    ? (raw.items as Array<Record<string, unknown>>)
+    : [];
+  const sourceUrl = stringFromRaw(raw, ["sourceUrl", "source"]);
+  const fingerprint = stringFromRaw(raw, ["fingerprint"]);
+  const summary = stringFromRaw(raw, ["summary"]);
+  const isEN = locale === "en";
+  return (
+    <section className="watch-preview-panel">
+      <div className="watch-preview-head">
+        <div>
+          <strong>{isEN ? "Watched source" : "观察源预览"}</strong>
+          {summary && <span>{summary}</span>}
+        </div>
+        {fingerprint && <code>{fingerprint.slice(0, 12)}</code>}
+      </div>
+      {sourceUrl && (
+        <a href={sourceUrl} target="_blank" rel="noreferrer" className="watch-source-link">
+          {sourceUrl}
+        </a>
+      )}
+      {items.length === 0 ? (
+        <p className="text-xs text-text-4">
+          {isEN ? "No items returned yet." : "还没有返回可预览条目。"}
+        </p>
+      ) : (
+        <div className="watch-item-list">
+          {items.slice(0, 6).map((item, index) => {
+            const title = stringFromRaw(item, ["title", "name"]) ??
+              (isEN ? "Untitled item" : "未命名条目");
+            const itemSummary = stringFromRaw(item, ["summary", "description"]);
+            const url = stringFromRaw(item, ["url", "link"]);
+            return (
+              <article key={`${title}-${index}`} className="watch-item">
+                <div>
+                  <strong>{title}</strong>
+                  {itemSummary && <p>{itemSummary}</p>}
+                </div>
+                {url && (
+                  <a href={url} target="_blank" rel="noreferrer">
+                    {isEN ? "Open" : "打开"}
+                  </a>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function isWatchKind(kind: string) {
+  return [
+    "announcement_feed",
+    "news_feed",
+    "deprecation_feed",
+    "group_catalog",
+    "model_catalog",
+    "pricing_catalog",
+  ].includes(kind);
+}
+
+function stringFromRaw(
+  raw: Record<string, unknown>,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return undefined;
 }
 
 function usageWindows(target?: MonitorTarget): UsageWindow[] {

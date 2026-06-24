@@ -289,8 +289,10 @@ function AssetGroupRow({
   const isEN = locale === "en";
   const summaryTarget = group.userTarget ?? first;
   const isRelay = isRelayProvider(provider);
+  const apiKeys = group.childItems.filter((item) => item.kind === "api_key").length;
+  const watchAssets = group.childItems.filter((item) => isWatchKind(item.kind)).length;
   const childLabel = isRelay
-    ? `${group.childItems.length} API Key`
+    ? `${apiKeys} API Key${watchAssets ? ` · ${watchAssets} ${isEN ? "watchers" : "观察资产"}` : ""}`
     : `${group.childItems.length} ${isEN ? "assets" : "个资产"}`;
   const metrics = group.userTarget
     ? relayUserMetrics(group.userTarget, locale)
@@ -408,6 +410,7 @@ function AssetRow({
           <div className="text-xs text-text-4 mono">{row.keyFingerprint}</div>
         )}
         <ApiKeyFacts row={row} locale={locale} />
+        <WatchFacts row={row} locale={locale} />
       </td>
       <td>{providerLabel(row.providerKind, t)}</td>
       <td>{t(`targetKind.${row.kind}`)}</td>
@@ -469,6 +472,10 @@ function assetKindHint(
         ? isEN
           ? "API key"
           : "API Key 子资产"
+        : isWatchKind(row.kind)
+          ? isEN
+            ? "watched source"
+            : "观察源"
         : isEN
           ? row.kind
           : "订阅/套餐资产";
@@ -483,6 +490,17 @@ type AssetMetric = {
 
 function isRelayProvider(provider: ProviderKind) {
   return provider === "newapi_user" || provider === "sub2api_user";
+}
+
+function isWatchKind(kind: string) {
+  return [
+    "announcement_feed",
+    "news_feed",
+    "deprecation_feed",
+    "group_catalog",
+    "model_catalog",
+    "pricing_catalog",
+  ].includes(kind);
 }
 
 function compactMetrics(
@@ -593,6 +611,42 @@ function ApiKeyFacts({
           <strong className="mono">{fact.value}</strong>
         </span>
       ))}
+    </div>
+  );
+}
+
+function WatchFacts({
+  row,
+  locale,
+}: {
+  row: MonitorTarget;
+  locale: string;
+}) {
+  if (!isWatchKind(row.kind)) return null;
+  const raw = row.raw ?? {};
+  const items = Array.isArray(raw.items) ? raw.items : [];
+  const first = items[0] as Record<string, unknown> | undefined;
+  const title = stringFromRaw(first ?? {}, ["title", "name"]) ??
+    stringFromRaw(raw, ["summary"]) ??
+    (locale === "en" ? "Waiting for first scan" : "等待首次扫描");
+  const source = stringFromRaw(raw, ["sourceUrl", "source"]) ?? "—";
+  const fingerprint = stringFromRaw(raw, ["fingerprint"]);
+  return (
+    <div className="asset-fact-strip watch-fact-strip">
+      <span className="asset-fact wide">
+        <small>{locale === "en" ? "Latest" : "最新"}</small>
+        <strong>{title}</strong>
+      </span>
+      <span className="asset-fact wide">
+        <small>{locale === "en" ? "Source" : "来源"}</small>
+        <strong className="mono">{source}</strong>
+      </span>
+      {fingerprint && (
+        <span className="asset-fact">
+          <small>Hash</small>
+          <strong className="mono">{fingerprint.slice(0, 10)}</strong>
+        </span>
+      )}
     </div>
   );
 }

@@ -166,6 +166,33 @@ func (s *Store) ListAlerts(ctx context.Context, status, severity string, limit, 
 	return alerts, rows.Err()
 }
 
+func (s *Store) ListAlertsForTarget(ctx context.Context, targetID string, limit int) ([]domain.AlertEvent, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT id, target_id, rule_id, severity, status, title, message, opened_at, resolved_at,
+			acknowledged_at, silence_until
+		FROM alert_events
+		WHERE target_id=$1
+		ORDER BY opened_at DESC
+		LIMIT $2
+	`, targetID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var alerts []domain.AlertEvent
+	for rows.Next() {
+		alert, err := scanAlertEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, *alert)
+	}
+	return alerts, rows.Err()
+}
+
 func (s *Store) UpdateAlertStatus(ctx context.Context, id, status string, silenceUntil *time.Time) (*domain.AlertEvent, error) {
 	now := time.Now().UTC()
 	row := s.db.QueryRow(ctx, `

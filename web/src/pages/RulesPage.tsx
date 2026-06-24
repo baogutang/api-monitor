@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react";
-import { instancesApi, rulesApi, targetsApi } from "@/api/services";
+import { channelsApi, instancesApi, rulesApi, targetsApi } from "@/api/services";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody } from "@/components/ui/Card";
@@ -11,6 +11,7 @@ import type {
   AlertRule,
   Instance,
   MonitorTarget,
+  NotificationChannel,
   ProviderKind,
 } from "@/lib/types";
 import { usePreferences } from "@/contexts/PreferencesContext";
@@ -21,11 +22,27 @@ const CONDITIONS = [
   "remaining_quota_below",
   "remaining_percent_below",
   "days_until_expiry_below",
-  "scan_failures_gte",
   "health_not_healthy",
   "monthly_cost_above",
-  "cost_spike_percent_above",
+  "announcement_changed",
+  "news_changed",
+  "deprecation_changed",
+  "group_catalog_changed",
+  "model_catalog_changed",
+  "pricing_changed",
+  "source_changed",
 ] as const;
+
+const NO_THRESHOLD_CONDITIONS = new Set<string>([
+  "health_not_healthy",
+  "announcement_changed",
+  "news_changed",
+  "deprecation_changed",
+  "group_catalog_changed",
+  "model_catalog_changed",
+  "pricing_changed",
+  "source_changed",
+]);
 
 const SCOPES = [
   {
@@ -107,6 +124,10 @@ export function RulesPage() {
   const targets = useQuery({
     queryKey: ["targets", "rule-options"],
     queryFn: () => targetsApi.list({ limit: 500 }),
+  });
+  const channels = useQuery({
+    queryKey: ["notification-channels", "rule-options"],
+    queryFn: channelsApi.list,
   });
   const scopeOptions = useMemo(
     () =>
@@ -246,7 +267,13 @@ export function RulesPage() {
                   className="select"
                   value={form.conditionType ?? "balance_below"}
                   onChange={(e) =>
-                    setForm({ ...form, conditionType: e.target.value })
+                    setForm({
+                      ...form,
+                      conditionType: e.target.value,
+                      thresholdValue: NO_THRESHOLD_CONDITIONS.has(e.target.value)
+                        ? 0
+                        : (form.thresholdValue ?? 10),
+                    })
                   }
                 >
                   {CONDITIONS.map((c) => (
@@ -256,17 +283,22 @@ export function RulesPage() {
                   ))}
                 </select>
               </div>
-              <div className="field">
-                <label>{t("rules.threshold")}</label>
-                <input
-                  className="input"
-                  type="number"
-                  value={form.thresholdValue ?? 0}
-                  onChange={(e) =>
-                    setForm({ ...form, thresholdValue: Number(e.target.value) })
-                  }
-                />
-              </div>
+              {!NO_THRESHOLD_CONDITIONS.has(form.conditionType ?? "") && (
+                <div className="field">
+                  <label>{t("rules.threshold")}</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={form.thresholdValue ?? 0}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        thresholdValue: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
+              )}
               <div className="field">
                 <label>{t("rules.sustain")}</label>
                 <input
@@ -289,6 +321,21 @@ export function RulesPage() {
                       ...form,
                       cooldownSeconds: Number(e.target.value) * 60,
                     })
+                  }
+                />
+              </div>
+              <div className="field col-span-2">
+                <label>{t("rules.channels")}</label>
+                <ChannelPicker
+                  channels={channels.data ?? []}
+                  selected={form.notificationChannelIds ?? []}
+                  emptyText={
+                    isEN
+                      ? "No channel yet. Create one in Notifications first."
+                      : "还没有通知渠道，请先到通知渠道页面创建。"
+                  }
+                  onChange={(ids) =>
+                    setForm({ ...form, notificationChannelIds: ids })
                   }
                 />
               </div>
@@ -346,7 +393,9 @@ export function RulesPage() {
                 <tr key={rule.id}>
                   <td className="font-medium">{rule.name}</td>
                   <td className="text-sm">
-                    {t(`condition.${rule.conditionType}`)} {rule.thresholdValue}
+                    {t(`condition.${rule.conditionType}`)}
+                    {!NO_THRESHOLD_CONDITIONS.has(rule.conditionType) &&
+                      ` ${rule.thresholdValue}`}
                   </td>
                   <td>{t(`severity.${rule.severity}`)}</td>
                   <td>
@@ -380,7 +429,53 @@ function buildPreview(
 ): string {
   const cond = t(`condition.${form.conditionType ?? "balance_below"}`);
   const sev = t(`severity.${form.severity ?? "warning"}`);
+  if (NO_THRESHOLD_CONDITIONS.has(form.conditionType ?? "")) {
+    return `${cond} → ${sev}`;
+  }
   return `${cond} ${form.thresholdValue ?? 0} × ${form.sustainCount ?? 1} → ${sev}`;
+}
+
+function ChannelPicker({
+  channels,
+  selected,
+  emptyText,
+  onChange,
+}: {
+  channels: NotificationChannel[];
+  selected: string[];
+  emptyText: string;
+  onChange: (ids: string[]) => void;
+}) {
+  if (channels.length === 0) {
+    return <span className="field-help">{emptyText}</span>;
+  }
+  const toggle = (id: string) => {
+    if (selected.includes(id)) {
+      onChange(selected.filter((item) => item !== id));
+      return;
+    }
+    onChange([...selected, id]);
+  };
+  return (
+    <div className="channel-check-grid">
+      {channels.map((channel) => (
+        <label
+          key={channel.id}
+          className={`channel-check${selected.includes(channel.id) ? " active" : ""}`}
+        >
+          <input
+            type="checkbox"
+            checked={selected.includes(channel.id)}
+            onChange={() => toggle(channel.id)}
+          />
+          <span>
+            <strong>{channel.name}</strong>
+            <small>{channel.type}</small>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
 }
 
 function buildScopeOptions(

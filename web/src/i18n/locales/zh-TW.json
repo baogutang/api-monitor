@@ -219,7 +219,14 @@
     "cost": "成本",
     "health": "健康",
     "window_quota": "時間窗口",
-    "manual_plan": "手動套餐"
+    "manual_plan": "手動套餐",
+    "announcement": "公告",
+    "news": "新聞",
+    "deprecation": "下架",
+    "group_catalog": "分組倍率",
+    "model_catalog": "模型目錄",
+    "pricing_catalog": "價格",
+    "change_watch": "變更監控"
   },
   "provider": {
     "newapi_user": "New API 使用者",
@@ -241,7 +248,13 @@
     "subscription": "訂閱",
     "project": "專案",
     "organization": "組織",
-    "endpoint": "端點"
+    "endpoint": "端點",
+    "announcement_feed": "上游公告",
+    "news_feed": "官方新聞",
+    "deprecation_feed": "模型下架",
+    "group_catalog": "分組倍率",
+    "model_catalog": "模型目錄",
+    "pricing_catalog": "價格目錄"
   },
   "channelType": {
     "dingtalk": "釘釘",
@@ -263,7 +276,14 @@
     "scan_failures_gte": "掃描失敗次數 ≥",
     "health_not_healthy": "健康狀態異常",
     "monthly_cost_above": "月成本高於",
-    "cost_spike_percent_above": "成本突增比例超過"
+    "cost_spike_percent_above": "成本突增比例超過",
+    "announcement_changed": "上游公告有更新",
+    "news_changed": "官方新聞有更新",
+    "deprecation_changed": "模型下架資訊有更新",
+    "group_catalog_changed": "分組/倍率有變動",
+    "model_catalog_changed": "模型目錄有變動",
+    "pricing_changed": "計費/價格有變動",
+    "source_changed": "觀察源內容有變動"
   },
   "errors": {
     "loadFailed": "載入失敗",

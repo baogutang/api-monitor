@@ -478,31 +478,81 @@ func renderAlert(settings map[string]any, alert domain.AlertEvent, target *domai
 
 func templateValues(alert domain.AlertEvent, target *domain.MonitorTarget) map[string]string {
 	values := map[string]string{
-		"title":      alert.Title,
-		"message":    alert.Message,
-		"severity":   alert.Severity,
-		"status":     alert.Status,
-		"openedAt":   alert.OpenedAt.Format(time.RFC3339),
-		"targetName": "-",
-		"provider":   "-",
-		"group":      "-",
-		"balance":    "-",
-		"quota":      "-",
-		"health":     "-",
+		"title":             alert.Title,
+		"message":           alert.Message,
+		"severity":          alert.Severity,
+		"status":            alert.Status,
+		"openedAt":          alert.OpenedAt.Format(time.RFC3339),
+		"targetName":        "-",
+		"provider":          "-",
+		"group":             "-",
+		"balance":           "-",
+		"quota":             "-",
+		"health":            "-",
+		"targetKind":        "-",
+		"changeType":        "-",
+		"changeTitle":       "-",
+		"changeSummary":     "-",
+		"changeUrl":         "-",
+		"changeFingerprint": "-",
 	}
 	if target != nil {
 		values["targetName"] = target.Name
 		values["provider"] = string(target.ProviderKind)
 		values["group"] = target.GroupName
 		values["health"] = string(target.Status)
+		values["targetKind"] = string(target.Kind)
 		if target.Balance != nil {
 			values["balance"] = fmt.Sprintf("%.4f %s", target.Balance.Amount, target.Balance.Currency)
 		}
 		if target.Quota != nil && target.Quota.Remaining != nil {
 			values["quota"] = fmt.Sprintf("%.4f %s", *target.Quota.Remaining, target.Quota.Unit)
 		}
+		changeType, changeTitle, changeSummary, changeURL, changeFingerprint := changeTemplateValues(target.Raw)
+		values["changeType"] = changeType
+		values["changeTitle"] = changeTitle
+		values["changeSummary"] = changeSummary
+		values["changeUrl"] = changeURL
+		values["changeFingerprint"] = changeFingerprint
 	}
 	return values
+}
+
+func changeTemplateValues(raw json.RawMessage) (changeType, title, summary, sourceURL, fingerprint string) {
+	changeType, title, summary, sourceURL, fingerprint = "-", "-", "-", "-", "-"
+	if len(raw) == 0 {
+		return
+	}
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return
+	}
+	if value, ok := object["watchKind"].(string); ok && value != "" {
+		changeType = value
+	}
+	if value, ok := object["summary"].(string); ok && value != "" {
+		summary = value
+	}
+	if value, ok := object["sourceUrl"].(string); ok && value != "" {
+		sourceURL = value
+	}
+	if value, ok := object["fingerprint"].(string); ok && value != "" {
+		fingerprint = value
+	}
+	if items, ok := object["items"].([]any); ok && len(items) > 0 {
+		if first, ok := items[0].(map[string]any); ok {
+			if value, ok := first["title"].(string); ok && value != "" {
+				title = value
+			}
+			if value, ok := first["summary"].(string); ok && value != "" {
+				summary = value
+			}
+			if value, ok := first["url"].(string); ok && value != "" {
+				sourceURL = value
+			}
+		}
+	}
+	return
 }
 
 func applyTemplate(template string, values map[string]string) string {
@@ -523,6 +573,8 @@ func defaultMarkdown(values map[string]string) string {
 		"- Asset: `{{targetName}}`",
 		"- Provider: `{{provider}}`",
 		"- Group: `{{group}}`",
+		"- Change: `{{changeTitle}}`",
+		"- Source: {{changeUrl}}",
 		"- Balance: `{{balance}}`",
 		"- Remaining quota: `{{quota}}`",
 		"- Opened: `{{openedAt}}`",
@@ -537,6 +589,8 @@ func defaultText(values map[string]string) string {
 		"Asset: {{targetName}}",
 		"Provider: {{provider}}",
 		"Group: {{group}}",
+		"Change: {{changeTitle}}",
+		"Source: {{changeUrl}}",
 		"Balance: {{balance}}",
 		"Remaining quota: {{quota}}",
 		"Opened: {{openedAt}}",

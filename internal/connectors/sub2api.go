@@ -54,7 +54,7 @@ func (c *sub2APIUserConnector) Discover(ctx context.Context, instance domain.Ins
 		Raw:          rawWithWindows,
 		Enabled:      true,
 	}}
-	if keysRaw, _, keyErr := requestFirstJSON(ctx, c.client, http.MethodGet, root, []string{"/api/v1/api-keys", "/api/v1/user/keys"}, headers, nil); keyErr == nil {
+	if keysRaw, _, keyErr := requestFirstJSON(ctx, c.client, http.MethodGet, root, []string{"/api/v1/api-keys", "/api/v1/keys", "/api/v1/user/keys"}, headers, nil); keyErr == nil {
 		for _, item := range arrayFromAny(unwrapData(keysRaw)) {
 			obj := objectFromAny(item)
 			key := stringFromJSON(obj, "key", "api_key", "token")
@@ -99,6 +99,7 @@ func (c *sub2APIUserConnector) Discover(ctx context.Context, instance domain.Ins
 			})
 		}
 	}
+	targets = append(targets, sub2APIWatchTargets(instance)...)
 	return targets, nil
 }
 
@@ -107,9 +108,12 @@ func (c *sub2APIUserConnector) Scan(ctx context.Context, instance domain.Instanc
 	if authErr != nil {
 		return &domain.ScanResult{Status: flexibleStatus(authErr), Error: authErr.Error()}, authErr
 	}
+	if isWatchTarget(target.Kind) {
+		return scanSub2APIWatch(ctx, c.client, instance, target, headers)
+	}
 	root := baseURL(instance, "")
 	if target.Kind == domain.TargetAPIKey {
-		raw, _, err := requestFirstJSON(ctx, c.client, http.MethodGet, root, []string{"/api/v1/api-keys", "/api/v1/user/keys"}, headers, nil)
+		raw, _, err := requestFirstJSON(ctx, c.client, http.MethodGet, root, []string{"/api/v1/api-keys", "/api/v1/keys", "/api/v1/user/keys"}, headers, nil)
 		if err != nil {
 			return &domain.ScanResult{Status: flexibleStatus(err), Error: err.Error(), Raw: raw}, err
 		}

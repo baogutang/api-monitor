@@ -19,10 +19,29 @@ export type TargetKind =
   | 'project'
   | 'organization'
   | 'endpoint'
+  | 'announcement_feed'
+  | 'news_feed'
+  | 'deprecation_feed'
+  | 'group_catalog'
+  | 'model_catalog'
+  | 'pricing_catalog'
 
 export type HealthStatus = 'healthy' | 'warning' | 'critical' | 'unknown'
 
-export type Capability = 'balance' | 'usage' | 'cost' | 'health' | 'window_quota' | 'manual_plan'
+export type Capability =
+  | 'balance'
+  | 'usage'
+  | 'cost'
+  | 'health'
+  | 'window_quota'
+  | 'manual_plan'
+  | 'announcement'
+  | 'news'
+  | 'deprecation'
+  | 'group_catalog'
+  | 'model_catalog'
+  | 'pricing_catalog'
+  | 'change_watch'
 
 export type Money = { amount: number; currency: string }
 
@@ -89,6 +108,13 @@ export type MonitorTarget = {
   raw?: {
     usageWindows?: UsageWindow[]
     usage_windows?: UsageWindow[]
+    watchKind?: string
+    source?: string
+    sourceUrl?: string
+    fingerprint?: string
+    summary?: string
+    count?: number
+    items?: Array<Record<string, unknown>>
     [key: string]: unknown
   }
   lastScanAt?: string

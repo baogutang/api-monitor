@@ -219,7 +219,14 @@
     "cost": "成本",
     "health": "健康",
     "window_quota": "时间窗口",
-    "manual_plan": "手动套餐"
+    "manual_plan": "手动套餐",
+    "announcement": "公告",
+    "news": "新闻",
+    "deprecation": "下架",
+    "group_catalog": "分组倍率",
+    "model_catalog": "模型目录",
+    "pricing_catalog": "价格",
+    "change_watch": "变更监控"
   },
   "provider": {
     "newapi_user": "New API 用户",
@@ -241,7 +248,13 @@
     "subscription": "订阅",
     "project": "项目",
     "organization": "组织",
-    "endpoint": "端点"
+    "endpoint": "端点",
+    "announcement_feed": "上游公告",
+    "news_feed": "官方新闻",
+    "deprecation_feed": "模型下架",
+    "group_catalog": "分组倍率",
+    "model_catalog": "模型目录",
+    "pricing_catalog": "价格目录"
   },
   "channelType": {
     "dingtalk": "钉钉",
@@ -263,7 +276,14 @@
     "scan_failures_gte": "扫描失败次数 ≥",
     "health_not_healthy": "健康状态异常",
     "monthly_cost_above": "月成本高于",
-    "cost_spike_percent_above": "成本突增比例超过"
+    "cost_spike_percent_above": "成本突增比例超过",
+    "announcement_changed": "上游公告有更新",
+    "news_changed": "官方新闻有更新",
+    "deprecation_changed": "模型下架信息有更新",
+    "group_catalog_changed": "分组/倍率有变动",
+    "model_catalog_changed": "模型目录有变动",
+    "pricing_changed": "计费/价格有变动",
+    "source_changed": "观察源内容有变动"
   },
   "errors": {
     "loadFailed": "加载失败",
