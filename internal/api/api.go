@@ -314,24 +314,24 @@ func (s *Server) riskTargets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) dashboardTrends(w http.ResponseWriter, r *http.Request) {
-	targets, err := s.store.ListTargets(r.Context(), store.TargetFilter{Limit: 20})
+	rangeID := strings.ToLower(r.URL.Query().Get("range"))
+	since := time.Now().Add(-24 * time.Hour)
+	bucket := "hour"
+	switch rangeID {
+	case "1h":
+		since = time.Now().Add(-1 * time.Hour)
+		bucket = "minute"
+	case "7d":
+		since = time.Now().Add(-7 * 24 * time.Hour)
+		bucket = "day"
+	case "30d":
+		since = time.Now().Add(-30 * 24 * time.Hour)
+		bucket = "day"
+	}
+	points, err := s.store.DashboardTrends(r.Context(), since, bucket)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "trends_failed", err.Error(), nil)
 		return
-	}
-	points := make([]map[string]any, 0, len(targets))
-	for _, target := range targets {
-		point := map[string]any{
-			"capturedAt":   time.Now().UTC().Format(time.RFC3339),
-			"providerKind": target.ProviderKind,
-		}
-		if target.Balance != nil {
-			point["balance"] = target.Balance
-		}
-		if target.MonthlyCost != nil {
-			point["cost"] = target.MonthlyCost
-		}
-		points = append(points, point)
 	}
 	writeJSON(w, http.StatusOK, points)
 }

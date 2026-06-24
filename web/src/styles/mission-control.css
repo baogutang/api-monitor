@@ -1831,6 +1831,207 @@ textarea.input {
   color: var(--t1);
 }
 
+.notification-board {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.notification-group {
+  border: 1px solid var(--cb);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur);
+  overflow: hidden;
+}
+
+.notification-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--cb);
+  color: var(--t1);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.notification-group-title small {
+  color: var(--t3);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.notification-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.notification-card {
+  display: flex;
+  min-height: 150px;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--cb);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--card) 84%, transparent);
+  transition:
+    border-color 0.16s ease,
+    transform 0.16s ease,
+    background 0.16s ease;
+}
+
+.notification-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--ac) 28%, var(--cb));
+  background: var(--card-strong);
+}
+
+.notification-card-disabled {
+  opacity: 0.72;
+}
+
+.notification-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.notification-card-title {
+  min-width: 0;
+  flex: 1;
+}
+
+.notification-card-title strong,
+.notification-card-title span {
+  display: block;
+}
+
+.notification-card-title strong {
+  overflow: hidden;
+  color: var(--t1);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-card-title span {
+  margin-top: 3px;
+  color: var(--t3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.notification-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.notification-card-meta span {
+  padding: 5px 8px;
+  border: 1px solid var(--cb);
+  border-radius: 999px;
+  color: var(--t3);
+  font-size: 11px;
+}
+
+.notification-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.test-result-strip {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--ac) 22%, var(--cb));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ac) 8%, transparent);
+  color: var(--t2);
+  font-size: 12px;
+}
+
+.notification-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: color-mix(in srgb, #020617 42%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.notification-editor-modal {
+  width: min(1520px, calc(100vw - 56px));
+  max-height: calc(100vh - 56px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--cb);
+  border-radius: 18px;
+  background: var(--bg);
+  box-shadow: 0 30px 90px rgba(15, 23, 42, 0.26);
+  overflow: hidden;
+}
+
+.notification-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--cb);
+  background: var(--card);
+}
+
+.notification-modal-head strong,
+.notification-modal-head span {
+  display: block;
+}
+
+.notification-modal-head strong {
+  color: var(--t1);
+  font-size: 15px;
+}
+
+.notification-modal-head span {
+  margin-top: 3px;
+  color: var(--t3);
+  font-size: 12px;
+}
+
+.modal-close {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--cb);
+  border-radius: 10px;
+  background: var(--card-strong);
+  color: var(--t2);
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  color: var(--t1);
+  border-color: color-mix(in srgb, var(--ac) 28%, var(--cb));
+}
+
+.notif-layout-modal {
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .channel-icon {
   width: 32px;
   height: 32px;
@@ -2456,6 +2657,10 @@ textarea.input {
     grid-template-columns: 220px minmax(0, 1fr);
   }
 
+  .notif-layout-modal {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
   .notif-panel-r {
     grid-column: 1 / -1;
     border-top: 1px solid var(--cb);
@@ -2518,6 +2723,21 @@ textarea.input {
     flex-direction: column;
     min-height: auto;
     overflow: visible;
+  }
+
+  .notification-modal-backdrop {
+    padding: 0;
+  }
+
+  .notification-editor-modal {
+    width: 100vw;
+    max-height: 100vh;
+    height: 100vh;
+    border-radius: 0;
+  }
+
+  .notif-layout-modal {
+    overflow: auto;
   }
 
   .notif-panel-l,

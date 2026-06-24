@@ -104,17 +104,9 @@ export function RulesPage() {
   const isEN = resolvedLocale === "en";
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState<Partial<AlertRule>>({
-    name: "",
-    scopeType: "global",
-    severity: "warning",
-    conditionType: "balance_below",
-    thresholdValue: 10,
-    sustainCount: 2,
-    cooldownSeconds: 3600,
-    notificationChannelIds: [],
-    enabled: true,
-  });
+  const [form, setForm] = useState<Partial<AlertRule>>(() =>
+    defaultRuleForm(),
+  );
 
   const list = useQuery({ queryKey: ["rules"], queryFn: rulesApi.list });
   const instances = useQuery({
@@ -140,11 +132,19 @@ export function RulesPage() {
     [form.scopeType, instances.data, targets.data?.items, t],
   );
 
-  const createMut = useMutation({
-    mutationFn: () => rulesApi.create(form),
+  const channelNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (channels.data ?? []).forEach((channel) => map.set(channel.id, channel.name));
+    return map;
+  }, [channels.data]);
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      form.id ? rulesApi.patch(form.id, form) : rulesApi.create(form),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["rules"] });
       setShowForm(false);
+      setForm(defaultRuleForm());
     },
   });
 
@@ -157,6 +157,16 @@ export function RulesPage() {
   const scope =
     SCOPES.find((s) => s.value === (form.scopeType ?? "global")) ?? SCOPES[0];
 
+  const startCreate = () => {
+    setForm(defaultRuleForm());
+    setShowForm(true);
+  };
+
+  const startEdit = (rule: AlertRule) => {
+    setForm({ ...rule });
+    setShowForm(true);
+  };
+
   return (
     <AppShell
       title={t("rules.title")}
@@ -164,7 +174,7 @@ export function RulesPage() {
       onRefresh={() => void list.refetch()}
       refreshing={list.isFetching}
       actions={
-        <Button size="sm" variant="primary" onClick={() => setShowForm(true)}>
+        <Button size="sm" variant="primary" onClick={startCreate}>
           <Plus size={14} />
           {t("rules.create")}
         </Button>
@@ -343,15 +353,26 @@ export function RulesPage() {
             <p className="text-sm text-text-3 mt-3 p-3 bg-bg-elevated rounded-md">
               {t("rules.preview")}: {preview}
             </p>
+            <p className="text-sm text-text-3 mt-2">
+              {isEN
+                ? "When this rule is triggered, an alert event is created. Selected channels receive the rendered message; if none are selected, the event stays in Alert Center only."
+                : "规则命中后会先生成告警事件；已选择的通知渠道会同步发送渲染后的消息，未选择渠道时只进入告警中心。"}
+            </p>
             <div className="flex gap-2 mt-3">
               <Button
                 variant="primary"
-                loading={createMut.isPending}
-                onClick={() => createMut.mutate()}
+                loading={saveMut.isPending}
+                onClick={() => saveMut.mutate()}
               >
                 {t("common.save")}
               </Button>
-              <Button variant="ghost" onClick={() => setShowForm(false)}>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setShowForm(false);
+                  setForm(defaultRuleForm());
+                }}
+              >
                 {t("common.cancel")}
               </Button>
             </div>
@@ -371,7 +392,7 @@ export function RulesPage() {
               ? "Create rules for balance, quota windows, expiry, and scan health."
               : "创建余额、窗口额度、到期时间和扫描健康相关的告警策略。"}
           </p>
-          <Button variant="primary" onClick={() => setShowForm(true)}>
+          <Button variant="primary" onClick={startCreate}>
             <Plus size={14} />
             {t("rules.create")}
           </Button>
@@ -384,6 +405,7 @@ export function RulesPage() {
                 <th>{t("assets.name")}</th>
                 <th>{t("rules.condition")}</th>
                 <th>{t("alerts.severity")}</th>
+                <th>{t("rules.channels")}</th>
                 <th>{t("common.status")}</th>
                 <th>{t("common.actions")}</th>
               </tr>
@@ -398,10 +420,20 @@ export function RulesPage() {
                       ` ${rule.thresholdValue}`}
                   </td>
                   <td>{t(`severity.${rule.severity}`)}</td>
+                  <td className="text-sm">
+                    {formatRuleChannels(rule.notificationChannelIds, channelNameMap, isEN)}
+                  </td>
                   <td>
                     {rule.enabled ? t("common.enabled") : t("common.disabled")}
                   </td>
                   <td>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => startEdit(rule)}
+                    >
+                      {isEN ? "Edit" : "编辑"}
+                    </Button>
                     <Button
                       size="sm"
                       variant="ghost"
@@ -421,6 +453,31 @@ export function RulesPage() {
       )}
     </AppShell>
   );
+}
+
+function defaultRuleForm(): Partial<AlertRule> {
+  return {
+    name: "",
+    scopeType: "global",
+    severity: "warning",
+    conditionType: "balance_below",
+    thresholdValue: 10,
+    sustainCount: 2,
+    cooldownSeconds: 3600,
+    notificationChannelIds: [],
+    enabled: true,
+  };
+}
+
+function formatRuleChannels(
+  ids: string[],
+  channelNameMap: Map<string, string>,
+  isEN: boolean,
+) {
+  if (!ids || ids.length === 0) {
+    return isEN ? "Alert Center only" : "仅告警中心";
+  }
+  return ids.map((id) => channelNameMap.get(id) ?? id).join(" / ");
 }
 
 function buildPreview(

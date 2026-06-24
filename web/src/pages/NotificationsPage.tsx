@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Copy, Info, Lock, Plus, RotateCcw, Save, Send } from "lucide-react";
+import { Copy, Info, Lock, Plus, RotateCcw, Save, Send, X } from "lucide-react";
 import { channelsApi } from "@/api/services";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/Button";
@@ -755,6 +755,7 @@ export function NotificationsPage() {
   const [previewTab, setPreviewTab] = useState<PreviewTab>("message");
   const [lastTest, setLastTest] = useState("");
   const [activeHelp, setActiveHelp] = useState(specs.feishu.help);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   const list = useQuery({ queryKey: ["channels"], queryFn: channelsApi.list });
   const channels = list.data ?? [];
@@ -778,6 +779,16 @@ export function NotificationsPage() {
     onSuccess: (channel) => {
       void qc.invalidateQueries({ queryKey: ["channels"] });
       setForm(draftFromChannel(channel, t));
+      setLastTest("");
+      setEditorOpen(false);
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => channelsApi.delete(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["channels"] });
+      setEditorOpen(false);
       setLastTest("");
     },
   });
@@ -844,6 +855,16 @@ export function NotificationsPage() {
     setLastTest("");
   }
 
+  function openCreate(type: ChannelType = "feishu") {
+    selectType(type);
+    setEditorOpen(true);
+  }
+
+  function openEdit(channel: NotificationChannel) {
+    selectChannel(channel);
+    setEditorOpen(true);
+  }
+
   function updateSetting(key: string, value: string | number | boolean) {
     setForm((cur) => ({ ...cur, settings: { ...cur.settings, [key]: value } }));
   }
@@ -869,53 +890,143 @@ export function NotificationsPage() {
         <Button
           size="sm"
           variant="primary"
-          onClick={() => selectType("feishu")}
+          onClick={() => openCreate("feishu")}
         >
           <Plus size={13} />
           添加渠道
         </Button>
       }
     >
-      <div className="notif-layout">
+      {list.isLoading ? (
+        <LoadingSkeleton />
+      ) : list.isError ? (
+        <ErrorState onRetry={() => void list.refetch()} />
+      ) : (
+        <div className="notification-board">
+          {channels.length === 0 ? (
+            <div className="empty-state">
+              <h3>还没有通知渠道</h3>
+              <p>
+                先添加一个钉钉、飞书、企业微信、邮件、短信或电话渠道，再到告警规则里选择它。
+              </p>
+              <Button variant="primary" onClick={() => openCreate("feishu")}>
+                <Plus size={14} />
+                添加渠道
+              </Button>
+            </div>
+          ) : (
+            (["IM", "HTTP", "Email", "SMS", "Voice"] as const).map((group) =>
+              grouped[group].length > 0 ? (
+                <section className="notification-group" key={group}>
+                  <div className="notification-group-title">
+                    <span>{groupLabel(group)}</span>
+                    <small>{grouped[group].length} 个配置</small>
+                  </div>
+                  <div className="notification-card-grid">
+                    {grouped[group].map((channel) => {
+                      const type = normalizeType(channel.type);
+                      return (
+                        <article
+                          key={channel.id}
+                          className={`notification-card${!channel.enabled ? " notification-card-disabled" : ""}`}
+                        >
+                          <div className="notification-card-top">
+                            <div
+                              className="channel-icon"
+                              style={{ background: specs[type].accent }}
+                            >
+                              {specs[type].emoji}
+                            </div>
+                            <div className="notification-card-title">
+                              <strong>{channel.name}</strong>
+                              <span>{t(`channelType.${type}`)} · {specs[type].sendPath}</span>
+                            </div>
+                            <span
+                              className={`ch-dot ${channel.enabled ? "ch-dot-ok" : "ch-dot-warn"}`}
+                            />
+                          </div>
+                          <div className="notification-card-meta">
+                            <span>密钥 {channel.secretFingerprint ? "已保存" : "未配置"}</span>
+                            <span>更新 {new Intl.DateTimeFormat(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(channel.updatedAt))}</span>
+                          </div>
+                          <div className="notification-card-actions">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => openEdit(channel)}
+                            >
+                              编辑
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              loading={
+                                testMut.isPending && testMut.variables === channel.id
+                              }
+                              onClick={() => testMut.mutate(channel.id)}
+                            >
+                              测试已保存配置
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              loading={
+                                deleteMut.isPending &&
+                                deleteMut.variables === channel.id
+                              }
+                              onClick={() => {
+                                if (confirm(t("common.confirmDelete")))
+                                  deleteMut.mutate(channel.id);
+                              }}
+                            >
+                              删除
+                            </Button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : null,
+            )
+          )}
+          {lastTest && <div className="test-result-strip">{lastTest}</div>}
+        </div>
+      )}
+
+      {editorOpen && (
+        <div className="notification-modal-backdrop" role="presentation">
+          <div
+            className="notification-editor-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={form.id ? "编辑通知渠道" : "新增通知渠道"}
+          >
+            <div className="notification-modal-head">
+              <div>
+                <strong>{form.id ? "编辑通知渠道" : "新增通知渠道"}</strong>
+                <span>保存后可在告警规则里勾选使用，测试会真实调用后端发送接口。</span>
+              </div>
+              <button
+                className="modal-close"
+                type="button"
+                aria-label="关闭"
+                onClick={() => setEditorOpen(false)}
+              >
+                <X size={17} />
+              </button>
+            </div>
+            <div className="notif-layout notif-layout-modal">
         <aside className="notif-panel-l">
           {(["IM", "HTTP", "Email", "SMS", "Voice"] as const).map((group) => (
             <div key={group}>
               <div className="ch-group-label">{groupLabel(group)}</div>
-              {grouped[group].map((channel) => {
-                const type = normalizeType(channel.type);
-                return (
-                  <button
-                    key={channel.id}
-                    type="button"
-                    className={`channel-item${form.id === channel.id ? " active" : ""}${!channel.enabled ? " ch-disabled" : ""}`}
-                    onClick={() => selectChannel(channel)}
-                  >
-                    <div
-                      className="channel-icon"
-                      style={{ background: specs[type].accent }}
-                    >
-                      {specs[type].emoji}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="channel-name truncate">
-                        {channel.name}
-                      </div>
-                      <div className="channel-type-lbl">
-                        {t(`channelType.${type}`)}
-                      </div>
-                    </div>
-                    <span
-                      className={`ch-dot ${channel.enabled ? "ch-dot-ok" : "ch-dot-warn"}`}
-                    />
-                  </button>
-                );
-              })}
               {CHANNEL_TYPES.filter((type) => specs[type].group === group).map(
                 (type) => (
                   <button
                     key={type}
                     type="button"
-                    className={`channel-item channel-blueprint${!form.id && activeType === type ? " active" : ""}`}
+                    className={`channel-item channel-blueprint${activeType === type ? " active" : ""}`}
                     onClick={() => selectType(type)}
                   >
                     <div
@@ -928,7 +1039,9 @@ export function NotificationsPage() {
                       <div className="channel-name truncate">
                         {t(`channelType.${type}`)}
                       </div>
-                      <div className="channel-type-lbl">新建配置</div>
+                      <div className="channel-type-lbl">
+                        {specs[type].sendPath}
+                      </div>
                     </div>
                   </button>
                 ),
@@ -1269,7 +1382,10 @@ export function NotificationsPage() {
             <div className="text-xs text-muted">{activeHelp}</div>
           </div>
         </aside>
-      </div>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

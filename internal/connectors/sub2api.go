@@ -13,6 +13,14 @@ type sub2APIUserConnector struct {
 	client *http.Client
 }
 
+var sub2APIKeyListPaths = []string{
+	"/api/v1/keys",
+	"/api/v1/api-keys",
+	"/api/v1/user/api-keys",
+	"/api/v1/user/keys",
+	"/api/keys",
+}
+
 func (c *sub2APIUserConnector) Kind() domain.ProviderKind { return domain.ProviderSub2APIUser }
 
 func (c *sub2APIUserConnector) Test(ctx context.Context, instance domain.Instance) (*domain.ProbeResult, error) {
@@ -54,18 +62,18 @@ func (c *sub2APIUserConnector) Discover(ctx context.Context, instance domain.Ins
 		Raw:          rawWithWindows,
 		Enabled:      true,
 	}}
-	if keysRaw, _, keyErr := requestFirstJSON(ctx, c.client, http.MethodGet, root, []string{"/api/v1/api-keys", "/api/v1/keys", "/api/v1/user/keys"}, headers, nil); keyErr == nil {
-		for _, item := range arrayFromAny(unwrapData(keysRaw)) {
+	if keysRaw, _, keyErr := requestFirstJSON(ctx, c.client, http.MethodGet, root, sub2APIKeyListPaths, headers, nil); keyErr == nil {
+		for _, item := range sub2APIKeyItems(keysRaw) {
 			obj := objectFromAny(item)
-			key := stringFromJSON(obj, "key", "api_key", "token")
-			name := firstNonEmpty(stringFromJSON(obj, "name", "label"), "API Key")
+			key := stringFromJSON(obj, "key", "api_key", "apiKey", "token", "value")
+			name := firstNonEmpty(stringFromJSON(obj, "name", "label", "title", "remark", "description"), "API Key")
 			targets = append(targets, domain.MonitorTarget{
 				InstanceID:     instance.ID,
 				ProviderKind:   instance.ProviderKind,
 				Kind:           domain.TargetAPIKey,
 				Name:           name,
-				ExternalID:     firstNonEmpty(stringFromJSON(obj, "id"), keyFingerprint(key), name),
-				GroupName:      instance.GroupName,
+				ExternalID:     firstNonEmpty(stringFromJSON(obj, "id", "key_id", "keyId", "uuid"), keyFingerprint(key), name),
+				GroupName:      firstNonEmpty(stringFromJSON(obj, "group_name", "groupName", "group"), instance.GroupName),
 				KeyFingerprint: keyFingerprint(key),
 				Capabilities:   capabilities(domain.CapabilityUsage, domain.CapabilityHealth),
 				Status:         domain.StatusUnknown,
@@ -113,11 +121,11 @@ func (c *sub2APIUserConnector) Scan(ctx context.Context, instance domain.Instanc
 	}
 	root := baseURL(instance, "")
 	if target.Kind == domain.TargetAPIKey {
-		raw, _, err := requestFirstJSON(ctx, c.client, http.MethodGet, root, []string{"/api/v1/api-keys", "/api/v1/keys", "/api/v1/user/keys"}, headers, nil)
+		raw, _, err := requestFirstJSON(ctx, c.client, http.MethodGet, root, sub2APIKeyListPaths, headers, nil)
 		if err != nil {
 			return &domain.ScanResult{Status: flexibleStatus(err), Error: err.Error(), Raw: raw}, err
 		}
-		obj := matchSub2APIKeyTarget(arrayFromAny(unwrapData(raw)), target)
+		obj := matchSub2APIKeyTarget(sub2APIKeyItems(raw), target)
 		if len(obj) == 0 {
 			err := errors.New("synchronized Sub2Api key was not found; sync monitored assets again")
 			return &domain.ScanResult{Status: domain.StatusWarning, Error: err.Error(), Raw: raw}, err
@@ -231,14 +239,38 @@ func matchSub2APIKeyTarget(items []any, target domain.MonitorTarget) map[string]
 }
 
 func sub2APIKeyObjectMatchesTarget(obj map[string]any, target domain.MonitorTarget) bool {
-	id := stringFromJSON(obj, "id")
+	id := stringFromJSON(obj, "id", "key_id", "keyId", "uuid")
 	if id != "" && id == target.ExternalID {
 		return true
 	}
-	key := stringFromJSON(obj, "key", "api_key", "apiKey", "token")
+	key := stringFromJSON(obj, "key", "api_key", "apiKey", "token", "value")
 	if key != "" && target.KeyFingerprint != "" && keyFingerprint(key) == target.KeyFingerprint {
 		return true
 	}
-	name := stringFromJSON(obj, "name", "label")
+	name := stringFromJSON(obj, "name", "label", "title", "remark", "description")
 	return name != "" && name == target.Name
+}
+
+func sub2APIKeyItems(raw json.RawMessage) []any {
+	if items := arrayFromAny(unwrapData(raw)); len(items) > 0 {
+		return items
+	}
+	root := rawObject(raw)
+	if items := arrayFromObjectKeys(root, "items", "list", "data", "records", "api_keys", "apiKeys", "keys"); len(items) > 0 {
+		return items
+	}
+	data := objectFromAny(root["data"])
+	return arrayFromObjectKeys(data, "items", "list", "records", "api_keys", "apiKeys", "keys")
+}
+
+func arrayFromObjectKeys(object map[string]any, keys ...string) []any {
+	for _, key := range keys {
+		if items := arrayFromAny(object[key]); len(items) > 0 {
+			return items
+		}
+		if arr, ok := object[key].([]any); ok {
+			return arr
+		}
+	}
+	return nil
 }

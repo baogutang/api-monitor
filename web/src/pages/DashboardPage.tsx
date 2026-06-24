@@ -58,7 +58,7 @@ export function DashboardPage() {
   });
   const targets = useQuery({
     queryKey: ["dashboard-targets"],
-    queryFn: () => targetsApi.list({ limit: 7 }),
+    queryFn: () => targetsApi.list({ limit: 200 }),
     refetchInterval: 15000,
     retry: false,
   });
@@ -70,16 +70,19 @@ export function DashboardPage() {
 
   const s = summary.data;
   const targetItems = targets.data?.items ?? [];
-  const totalBalance = useMemo(() => sumBalances(targetItems), [targetItems]);
+  const balanceTargets = useMemo(
+    () => targetItems.filter((target) => isTopLevelBalanceTarget(target)),
+    [targetItems],
+  );
+  const totalBalance = useMemo(
+    () => s?.totalBalance ?? sumBalances(balanceTargets),
+    [s?.totalBalance, balanceTargets],
+  );
   const trendSeries = useMemo(
     () => buildTrendSeries(trend.data ?? [], range, resolvedLocale),
     [trend.data, range, resolvedLocale],
   );
-  const todaySpend = useMemo(() => {
-    if (!trendSeries) return undefined;
-    const amount = trendSeries.values.reduce((acc, v) => acc + v, 0);
-    return { amount, currency: totalBalance.currency || "CNY" };
-  }, [trendSeries, totalBalance.currency]);
+  const todaySpend = s?.todayCost;
 
   const refetchAll = () => {
     void summary.refetch();
@@ -142,12 +145,12 @@ export function DashboardPage() {
               primary
               label="上游总余额"
               value={formatMoneyOrZero(totalBalance)}
-              sub={`← ${targetItems.length || s?.totalTargets || 0} 个渠道合计`}
+              sub={`← ${balanceTargets.length || s?.activeChannels || 0} 个渠道合计`}
             />
             <StatCard
               label="今日消耗"
               value={formatMoney(todaySpend)}
-              sub={todaySpend ? "来自后端趋势数据" : "暂无趋势数据"}
+              sub={todaySpend ? "来自今日快照差值" : "暂无今日消耗差值"}
             />
             <StatCard
               label="本月累计消耗"
@@ -156,8 +159,8 @@ export function DashboardPage() {
             />
             <StatCard
               label="活跃渠道"
-              value={`${s?.healthyTargets ?? 0} / ${s?.totalTargets ?? 0}`}
-              sub={`${s?.warningTargets ?? 0} 渠道余额告警`}
+              value={`${s?.activeChannels ?? balanceTargets.length} / ${balanceTargets.length || s?.activeChannels || 0}`}
+              sub={`${s?.alertingChannels ?? 0} 渠道余额告警`}
             />
           </section>
 
@@ -166,7 +169,7 @@ export function DashboardPage() {
               <div className="card-hdr">
                 <div className="card-ttl">
                   <span className="d" />
-                  消耗趋势（CNY）
+                  {trendSeries?.title ?? "余额趋势"}
                 </div>
                 <div
                   className="time-tabs"
@@ -190,6 +193,8 @@ export function DashboardPage() {
                   <MissionAreaChart
                     labels={trendSeries.labels}
                     values={trendSeries.values}
+                    currency={trendSeries.currency}
+                    label={trendSeries.title}
                     theme={resolvedTheme}
                   />
                 ) : (
@@ -209,14 +214,14 @@ export function DashboardPage() {
                 </div>
               </div>
               <div className="prov-list">
-                {targetItems.length === 0 ? (
+                {balanceTargets.length === 0 ? (
                   <DashboardEmpty
                     title="暂无上游渠道"
                     description="添加实例并同步监控资产后，这里会显示真实余额、额度和健康状态。"
                     compact
                   />
                 ) : (
-                  targetItems
+                  balanceTargets
                     .slice(0, 7)
                     .map((target) => (
                       <ProviderCard key={target.id} target={target} t={t} />
@@ -395,10 +400,14 @@ function ProviderCard({
 function MissionAreaChart({
   labels,
   values,
+  currency,
+  label,
   theme,
 }: {
   labels: string[];
   values: number[];
+  currency: string;
+  label: string;
   theme: "light" | "dark";
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -428,7 +437,7 @@ function MissionAreaChart({
         labels,
         datasets: [
           {
-            label: "消耗 (¥)",
+            label,
             data: values,
             borderColor: theme === "dark" ? "#38BDF8" : "#0284C7",
             borderWidth: 1.5,
@@ -462,7 +471,8 @@ function MissionAreaChart({
             padding: 10,
             cornerRadius: 8,
             callbacks: {
-              label: (context) => ` ¥ ${Number(context.parsed.y).toFixed(2)}`,
+              label: (context) =>
+                formatMoney({ amount: Number(context.parsed.y), currency }),
             },
           },
         },
@@ -486,7 +496,11 @@ function MissionAreaChart({
             ticks: {
               color: tickColor,
               font: { family: "'JetBrains Mono', monospace", size: 9.5 },
-              callback: (value) => `¥${Number(value).toFixed(1)}`,
+              callback: (value) =>
+                formatMoney({
+                  amount: Number(Number(value).toFixed(1)),
+                  currency,
+                }),
             },
             grid: {
               color:
@@ -501,10 +515,10 @@ function MissionAreaChart({
     };
     const chart = new ChartJS(ctx, config);
     return () => chart.destroy();
-  }, [labels, values, theme]);
+  }, [currency, label, labels, values, theme]);
 
   return (
-    <canvas ref={canvasRef} role="img" aria-label="API 费用消耗趋势折线图" />
+    <canvas ref={canvasRef} role="img" aria-label={label} />
   );
 }
 
@@ -513,16 +527,22 @@ function buildTrendSeries(
   range: RangeId,
   locale: string,
 ) {
-  const usablePoints = points.filter(
-    (point) => point.cost?.amount != null || point.balance?.amount != null,
+  const hasCost = points.some((point) => point.cost?.amount != null);
+  const usablePoints = points.filter((point) =>
+    hasCost ? point.cost?.amount != null : point.balance?.amount != null,
   );
   if (usablePoints.length === 0) return null;
+  const firstMoney = hasCost ? usablePoints[0].cost : usablePoints[0].balance;
   return {
+    title: `${hasCost ? "消耗趋势" : "余额趋势"}（${firstMoney?.currency ?? "USD"}）`,
+    currency: firstMoney?.currency ?? "USD",
     labels: usablePoints.map((point) =>
       formatTrendLabel(point.capturedAt, range, locale),
     ),
     values: usablePoints.map((point) =>
-      Number((point.cost?.amount ?? point.balance?.amount ?? 0).toFixed(2)),
+      Number(
+        ((hasCost ? point.cost?.amount : point.balance?.amount) ?? 0).toFixed(2),
+      ),
     ),
   };
 }
@@ -543,7 +563,7 @@ function formatTrendLabel(iso: string, range: RangeId, locale: string) {
 
 function sumBalances(targets: MonitorTarget[]): Money {
   const firstCurrency =
-    targets.find((item) => item.balance)?.balance?.currency || "CNY";
+    targets.find((item) => item.balance)?.balance?.currency || "USD";
   return {
     currency: firstCurrency,
     amount: targets.reduce(
@@ -555,8 +575,12 @@ function sumBalances(targets: MonitorTarget[]): Money {
 
 function formatMoneyOrZero(money: Money) {
   if (!money.amount)
-    return formatMoney({ amount: 0, currency: money.currency || "CNY" });
+    return formatMoney({ amount: 0, currency: money.currency || "USD" });
   return formatMoney(money);
+}
+
+function isTopLevelBalanceTarget(target: MonitorTarget) {
+  return target.kind === "user" || target.kind === "subscription";
 }
 
 function balancePercent(target: MonitorTarget) {

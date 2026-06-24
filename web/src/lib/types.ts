@@ -133,7 +133,11 @@ export type DashboardSummary = {
   unknownTargets: number
   scanSuccessRate: number
   monthlyCost?: Money
+  todayCost?: Money
+  totalBalance?: Money
   atRiskBalance?: Money
+  activeChannels: number
+  alertingChannels: number
   alerts24h: number
 }
 

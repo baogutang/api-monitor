@@ -21,7 +21,7 @@ API Monitor 是一个可自托管的 AI API 运维控制台。它把 new-api、s
 
 > English: API Monitor is a self-hosted control plane for AI relay balances, official account quotas, API key health, content-source changes, and real alert delivery.
 
-## 实机截图
+## 脱敏演示截图
 
 <table>
   <tr>
@@ -35,7 +35,7 @@ API Monitor 是一个可自托管的 AI API 运维控制台。它把 new-api、s
   </tr>
 </table>
 
-截图来自正在运行的 Docker 部署实例，README 不使用静态 mock 图。
+截图为脱敏演示数据，只展示页面能力与布局，不包含真实上游域名、账号、Token、API Key 或余额信息。
 
 ## 核心能力
 
@@ -274,8 +274,8 @@ gh repo edit baogutang/api-monitor \
 - 生成 GitHub Release
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.1.1
+git push origin v1.1.1
 ```
 
 ## 安全说明
