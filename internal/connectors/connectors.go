@@ -349,7 +349,7 @@ func inferBalance(object map[string]any) *domain.Money {
 }
 
 func inferQuota(object map[string]any) *domain.Quota {
-	used := floatFromJSON(object, "used_quota", "used", "usage", "used_amount")
+	used := floatFromJSON(object, "used_quota", "usedQuota", "quota_used", "quotaUsed", "used", "usage", "used_amount", "usedAmount")
 	total := floatFromJSON(object, "quota", "total_quota", "totalQuota", "total", "limit", "quota_limit", "quotaLimit")
 	remaining := floatFromJSON(object, "remaining_quota", "remainingQuota", "remaining", "remain_quota", "remainQuota", "available_quota", "availableQuota")
 	if used == nil && total == nil && remaining == nil {
@@ -368,6 +368,8 @@ func inferQuota(object map[string]any) *domain.Quota {
 
 func inferMonthlyCost(object map[string]any) *domain.Money {
 	amount := floatFromJSON(object,
+		"quota_used",
+		"quotaUsed",
 		"monthly_cost",
 		"monthlyCost",
 		"month_cost",
@@ -377,6 +379,8 @@ func inferMonthlyCost(object map[string]any) *domain.Money {
 		"usageCost",
 		"total_cost",
 		"totalCost",
+		"actual_cost",
+		"actualCost",
 		"today_cost",
 		"todayCost",
 		"daily_cost",

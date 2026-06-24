@@ -139,6 +139,20 @@ export type DashboardSummary = {
   activeChannels: number
   alertingChannels: number
   alerts24h: number
+  openAlerts?: number
+  criticalAlerts?: number
+  riskTargets?: number
+}
+
+export type InstanceUsageRange = 'today' | '24h' | '7d' | '30d'
+
+export type InstanceUsageSummary = {
+  instanceId: string
+  range: InstanceUsageRange
+  cost?: Money
+  requests: number
+  startedAt: string
+  endedAt: string
 }
 
 export type TrendPoint = {

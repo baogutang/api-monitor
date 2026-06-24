@@ -111,7 +111,111 @@ jobs:
         with:
           pattern: api-monitor_*
           merge-multiple: true
+      - name: Write deployment-first release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cat > release_body.md <<EOF
+          # API Monitor ${VERSION}
+
+          This release publishes ready-to-run API Monitor binaries and a multi-arch Docker image.
+
+          ## Docker image
+
+          \`\`\`bash
+          ghcr.io/${GITHUB_REPOSITORY}:${GITHUB_REF_NAME}
+          ghcr.io/${GITHUB_REPOSITORY}:latest
+          \`\`\`
+
+          Supported Docker platforms:
+
+          - linux/amd64
+          - linux/arm64
+
+          ## Docker Compose deployment
+
+          \`\`\`bash
+          mkdir -p api-monitor
+          cd api-monitor
+          curl -fsSLO https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/docker-compose.release.yml
+
+          cat > .env <<'ENVEOF'
+          HTTP_PORT=5090
+          API_MONITOR_IMAGE=ghcr.io/${GITHUB_REPOSITORY}:${GITHUB_REF_NAME}
+          POSTGRES_PASSWORD=replace-with-a-strong-password
+          APP_SECRET=replace-with-at-least-32-random-characters
+          DEFAULT_SCAN_INTERVAL_SECONDS=60
+          GITHUB_REPO=${GITHUB_REPOSITORY}
+          ENABLE_SELF_UPDATE=false
+          ENVEOF
+
+          docker compose -f docker-compose.release.yml up -d
+          \`\`\`
+
+          Open:
+
+          \`\`\`text
+          http://<server-ip>:5090
+          \`\`\`
+
+          ## Upgrade an existing Docker deployment
+
+          \`\`\`bash
+          cd api-monitor
+          sed -i.bak 's#^API_MONITOR_IMAGE=.*#API_MONITOR_IMAGE=ghcr.io/${GITHUB_REPOSITORY}:${GITHUB_REF_NAME}#' .env
+          docker compose -f docker-compose.release.yml pull api worker
+          docker compose -f docker-compose.release.yml up -d
+          docker compose -f docker-compose.release.yml ps
+          \`\`\`
+
+          The API service runs database migrations automatically on startup. Keep the same APP_SECRET value across upgrades; changing it invalidates encrypted upstream credentials.
+
+          ## Binary artifacts
+
+          Download the matching tarball below:
+
+          - api-monitor_${VERSION}_linux_amd64.tar.gz
+          - api-monitor_${VERSION}_linux_arm64.tar.gz
+          - api-monitor_${VERSION}_darwin_amd64.tar.gz
+          - api-monitor_${VERSION}_darwin_arm64.tar.gz
+
+          Each archive includes:
+
+          - api-monitor binary
+          - built web assets
+          - database migrations
+          - docker-compose examples
+          - README, docs, and .env.example
+
+          ## Required runtime services
+
+          - PostgreSQL 14+
+          - Redis 6+
+          - One API service process: \`api-monitor api\`
+          - One worker process: \`api-monitor worker\`
+
+          ## Version check and self-update
+
+          API Monitor can check this GitHub Release from the Settings page when \`GITHUB_REPO=${GITHUB_REPOSITORY}\` is configured.
+
+          Self-update is intentionally disabled by default. Enable it only in a trusted deployment environment:
+
+          \`\`\`bash
+          ENABLE_SELF_UPDATE=true
+          UPDATE_COMMAND='docker compose -f docker-compose.release.yml pull api worker && docker compose -f docker-compose.release.yml up -d'
+          \`\`\`
+
+          ## Rollback
+
+          Set \`API_MONITOR_IMAGE\` back to the previous tag and restart:
+
+          \`\`\`bash
+          docker compose -f docker-compose.release.yml pull api worker
+          docker compose -f docker-compose.release.yml up -d
+          \`\`\`
+
+          Always keep database volumes and Redis volumes mounted. Do not delete them during upgrades or rollbacks.
+          EOF
       - uses: softprops/action-gh-release@v2
         with:
           files: api-monitor_*.tar.gz
-          generate_release_notes: true
+          body_path: release_body.md

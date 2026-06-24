@@ -339,6 +339,7 @@ export function RulesPage() {
                 <ChannelPicker
                   channels={channels.data ?? []}
                   selected={form.notificationChannelIds ?? []}
+                  isEN={isEN}
                   emptyText={
                     isEN
                       ? "No channel yet. Create one in Notifications first."
@@ -474,10 +475,11 @@ function formatRuleChannels(
   channelNameMap: Map<string, string>,
   isEN: boolean,
 ) {
+  const alertCenter = isEN ? "Alert Center" : "告警中心";
   if (!ids || ids.length === 0) {
     return isEN ? "Alert Center only" : "仅告警中心";
   }
-  return ids.map((id) => channelNameMap.get(id) ?? id).join(" / ");
+  return [alertCenter, ...ids.map((id) => channelNameMap.get(id) ?? id)].join(" / ");
 }
 
 function buildPreview(
@@ -495,17 +497,16 @@ function buildPreview(
 function ChannelPicker({
   channels,
   selected,
+  isEN,
   emptyText,
   onChange,
 }: {
   channels: NotificationChannel[];
   selected: string[];
+  isEN: boolean;
   emptyText: string;
   onChange: (ids: string[]) => void;
 }) {
-  if (channels.length === 0) {
-    return <span className="field-help">{emptyText}</span>;
-  }
   const toggle = (id: string) => {
     if (selected.includes(id)) {
       onChange(selected.filter((item) => item !== id));
@@ -514,24 +515,34 @@ function ChannelPicker({
     onChange([...selected, id]);
   };
   return (
-    <div className="channel-check-grid">
-      {channels.map((channel) => (
-        <label
-          key={channel.id}
-          className={`channel-check${selected.includes(channel.id) ? " active" : ""}`}
-        >
-          <input
-            type="checkbox"
-            checked={selected.includes(channel.id)}
-            onChange={() => toggle(channel.id)}
-          />
+    <>
+      <div className="channel-check-grid">
+        <label className="channel-check active locked">
+          <input type="checkbox" checked readOnly />
           <span>
-            <strong>{channel.name}</strong>
-            <small>{channel.type}</small>
+            <strong>{isEN ? "Alert Center" : "告警中心"}</strong>
+            <small>alert-center · built-in</small>
           </span>
         </label>
-      ))}
-    </div>
+        {channels.map((channel) => (
+          <label
+            key={channel.id}
+            className={`channel-check${selected.includes(channel.id) ? " active" : ""}`}
+          >
+            <input
+              type="checkbox"
+              checked={selected.includes(channel.id)}
+              onChange={() => toggle(channel.id)}
+            />
+            <span>
+              <strong>{channel.name}</strong>
+              <small>{channel.type}</small>
+            </span>
+          </label>
+        ))}
+      </div>
+      {channels.length === 0 && <span className="field-help">{emptyText}</span>}
+    </>
   );
 }
 

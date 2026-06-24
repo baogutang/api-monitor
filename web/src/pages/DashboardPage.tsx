@@ -13,7 +13,7 @@ import {
   Tooltip,
   type ChartConfiguration,
 } from "chart.js";
-import { alertsApi, dashboardApi, targetsApi } from "@/api/services";
+import { alertsApi, dashboardApi, instancesApi, targetsApi } from "@/api/services";
 import { AppShell } from "@/components/layout/AppShell";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/State";
 import { formatMoney, providerLabel } from "@/lib/format";
@@ -22,6 +22,7 @@ import type {
   Money,
   ProviderKind,
   TrendPoint,
+  Instance,
 } from "@/lib/types";
 import { usePreferences } from "@/contexts/PreferencesContext";
 
@@ -62,6 +63,12 @@ export function DashboardPage() {
     refetchInterval: 15000,
     retry: false,
   });
+  const instances = useQuery({
+    queryKey: ["dashboard-instances"],
+    queryFn: instancesApi.list,
+    refetchInterval: 30000,
+    retry: false,
+  });
   const recentAlerts = useQuery({
     queryKey: ["dashboard-alerts"],
     queryFn: () => alertsApi.list({ limit: 6 }),
@@ -70,10 +77,19 @@ export function DashboardPage() {
 
   const s = summary.data;
   const targetItems = targets.data?.items ?? [];
+  const instanceMap = useMemo(
+    () =>
+      new Map(
+        (instances.data ?? []).map((instance) => [instance.id, instance]),
+      ),
+    [instances.data],
+  );
   const balanceTargets = useMemo(
     () => targetItems.filter((target) => isTopLevelBalanceTarget(target)),
     [targetItems],
   );
+  const openAlertCount = s?.openAlerts ?? 0;
+  const criticalAlertCount = s?.criticalAlerts ?? 0;
   const totalBalance = useMemo(
     () => s?.totalBalance ?? sumBalances(balanceTargets),
     [s?.totalBalance, balanceTargets],
@@ -88,17 +104,18 @@ export function DashboardPage() {
     void summary.refetch();
     void trend.refetch();
     void targets.refetch();
+    void instances.refetch();
     void recentAlerts.refetch();
   };
 
   return (
     <AppShell
       title={t("dashboard.title")}
-      description="token.baogutang.top"
+      description={t("dashboard.desc")}
       onRefresh={refetchAll}
       refreshing={summary.isFetching || trend.isFetching || targets.isFetching}
       actions={
-        (s?.criticalTargets ?? 0) > 0 ? (
+        criticalAlertCount > 0 ? (
           <span
             className="status-pill"
             style={{
@@ -108,7 +125,7 @@ export function DashboardPage() {
             }}
           >
             <span className="dot dot-crit" />
-            {s?.criticalTargets} 严重告警
+            {criticalAlertCount} 严重告警
           </span>
         ) : null
       }
@@ -122,12 +139,12 @@ export function DashboardPage() {
         />
       ) : (
         <>
-          {showBanner && (s?.criticalTargets ?? 0) > 0 && (
+          {showBanner && criticalAlertCount > 0 && (
             <div className="incident-banner">
               <span className="banner-dot" />
               <span className="incident-banner-msg">
-                <strong>{s?.criticalTargets} 个资产处于严重状态</strong>
-                ，请优先处理低余额、低额度或扫描失败目标。
+                <strong>{criticalAlertCount} 条严重告警仍未关闭</strong>
+                ，请到告警中心确认低余额、低额度、扫描失败或变更监控事件。
               </span>
               <button
                 className="incident-close"
@@ -160,7 +177,7 @@ export function DashboardPage() {
             <StatCard
               label="活跃渠道"
               value={`${s?.activeChannels ?? balanceTargets.length} / ${balanceTargets.length || s?.activeChannels || 0}`}
-              sub={`${s?.alertingChannels ?? 0} 渠道余额告警`}
+              sub={`${openAlertCount} 条未关闭告警 · ${s?.riskTargets ?? 0} 个风险资产`}
             />
           </section>
 
@@ -224,7 +241,12 @@ export function DashboardPage() {
                   balanceTargets
                     .slice(0, 7)
                     .map((target) => (
-                      <ProviderCard key={target.id} target={target} t={t} />
+                      <ProviderCard
+                        key={target.id}
+                        target={target}
+                        instance={instanceMap.get(target.instanceId)}
+                        t={t}
+                      />
                     ))
                 )}
               </div>
@@ -348,12 +370,17 @@ function StatCard({
 
 function ProviderCard({
   target,
+  instance,
   t,
 }: {
   target: MonitorTarget;
+  instance?: Instance;
   t: (key: string) => string;
 }) {
-  const visual = providerVisual(target.providerKind, target.name);
+  const displayName = instance?.name ?? target.name;
+  const subName =
+    instance?.name && instance.name !== target.name ? target.name : target.groupName;
+  const visual = providerVisual(target.providerKind, displayName);
   const percent = balancePercent(target);
   const tone =
     target.status === "critical"
@@ -377,10 +404,10 @@ function ProviderCard({
         {visual.mark}
       </div>
       <div className="prov-info">
-        <div className="prov-name">{target.name}</div>
+        <div className="prov-name">{displayName}</div>
         <div className="prov-model">
           {providerLabel(target.providerKind, t)} /{" "}
-          {target.groupName || target.kind}
+          {subName || target.kind}
         </div>
       </div>
       <div className="prov-bal">

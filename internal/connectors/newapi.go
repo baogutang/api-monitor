@@ -68,7 +68,7 @@ func (c *newAPIUserConnector) Discover(ctx context.Context, instance domain.Inst
 				Kind:           domain.TargetAPIKey,
 				Name:           name,
 				ExternalID:     firstNonEmpty(stringFromJSON(obj, "id", "key"), name),
-				GroupName:      instance.GroupName,
+				GroupName:      firstNonEmpty(stringFromJSON(obj, "group", "group_name", "groupName"), instance.GroupName),
 				KeyFingerprint: keyFingerprint(key),
 				Capabilities:   capabilities(domain.CapabilityUsage, domain.CapabilityHealth),
 				Status:         domain.StatusUnknown,

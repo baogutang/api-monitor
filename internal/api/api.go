@@ -62,6 +62,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/instances", s.requireAuth(http.HandlerFunc(s.listInstances)))
 	mux.Handle("POST /api/v1/instances", s.requireAuth(http.HandlerFunc(s.createInstance)))
 	mux.Handle("POST /api/v1/instances/test-draft", s.requireAuth(http.HandlerFunc(s.testDraftInstance)))
+	mux.Handle("GET /api/v1/instances/usage", s.requireAuth(http.HandlerFunc(s.instanceUsage)))
 	mux.Handle("GET /api/v1/instances/{id}", s.requireAuth(http.HandlerFunc(s.getInstance)))
 	mux.Handle("PATCH /api/v1/instances/{id}", s.requireAuth(http.HandlerFunc(s.updateInstance)))
 	mux.Handle("DELETE /api/v1/instances/{id}", s.requireAuth(http.HandlerFunc(s.deleteInstance)))
@@ -343,6 +344,19 @@ func (s *Server) listInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, instances)
+}
+
+func (s *Server) instanceUsage(w http.ResponseWriter, r *http.Request) {
+	rangeID := strings.ToLower(r.URL.Query().Get("range"))
+	if rangeID == "" {
+		rangeID = "today"
+	}
+	items, err := s.store.InstanceUsageSummaries(r.Context(), rangeID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "instance_usage_failed", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 type upsertInstanceRequest struct {

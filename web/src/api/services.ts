@@ -5,6 +5,8 @@ import type {
   BalanceSnapshot,
   DashboardSummary,
   Instance,
+  InstanceUsageRange,
+  InstanceUsageSummary,
   MonitorTarget,
   NotificationChannel,
   Paginated,
@@ -64,6 +66,8 @@ export const targetsApi = {
 
 export const instancesApi = {
   list: () => api.get<Instance[]>('/api/v1/instances'),
+  usage: (range: InstanceUsageRange = 'today') =>
+    api.get<InstanceUsageSummary[]>(`/api/v1/instances/usage?range=${range}`),
   get: (id: string) => api.get<Instance>(`/api/v1/instances/${id}`),
   create: (body: UpsertInstanceRequest) => api.post<Instance>('/api/v1/instances', body),
   testDraft: (body: UpsertInstanceRequest) => api.post<ProbeResult>('/api/v1/instances/test-draft', body),

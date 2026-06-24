@@ -5,10 +5,9 @@ import { ChevronDown, ChevronRight, Scan } from "lucide-react";
 import { instancesApi, targetsApi } from "@/api/services";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/Button";
-import { CapabilityBadge, StatusDot } from "@/components/ui/Badge";
+import { StatusDot } from "@/components/ui/Badge";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/State";
 import {
-  capabilityLabel,
   formatDate,
   formatMoney,
   formatNumber,
@@ -18,6 +17,8 @@ import {
 import type {
   HealthStatus,
   Instance,
+  InstanceUsageRange,
+  InstanceUsageSummary,
   MonitorTarget,
   ProviderKind,
 } from "@/lib/types";
@@ -27,6 +28,8 @@ import { Fragment, useMemo, useState } from "react";
 import { BrandIcon } from "@/components/BrandIcon";
 import type { UsageWindow } from "@/lib/types";
 
+const assetUsageRanges: InstanceUsageRange[] = ["today", "24h", "7d", "30d"];
+
 export function AssetsPage() {
   const { t } = useTranslation();
   const { resolvedLocale } = usePreferences();
@@ -35,6 +38,8 @@ export function AssetsPage() {
   const [status, setStatus] = useState("");
   const [provider, setProvider] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [usageRange, setUsageRange] =
+    useState<InstanceUsageRange>("today");
   const [collapsedGroups, setCollapsedGroups] = useState<
     Record<string, boolean>
   >({});
@@ -52,6 +57,10 @@ export function AssetsPage() {
   const instancesQuery = useQuery({
     queryKey: ["instances"],
     queryFn: instancesApi.list,
+  });
+  const usageQuery = useQuery({
+    queryKey: ["instances", "usage", usageRange],
+    queryFn: () => instancesApi.usage(usageRange),
   });
 
   const scanMut = useMutation({
@@ -71,6 +80,14 @@ export function AssetsPage() {
     () => groupTargets(items, instanceMap),
     [items, instanceMap],
   );
+  const usageMap = useMemo(
+    () =>
+      new Map(
+        (usageQuery.data ?? []).map((item) => [item.instanceId, item]),
+      ),
+    [usageQuery.data],
+  );
+  const isEN = resolvedLocale === "en";
   const toggleGroup = (id: string) => {
     setCollapsedGroups((current) => ({ ...current, [id]: !current[id] }));
   };
@@ -127,6 +144,18 @@ export function AssetsPage() {
           <option value="openai_key">{t("provider.openai_key")}</option>
           <option value="anthropic_key">{t("provider.anthropic_key")}</option>
         </select>
+        <div className="asset-range-tabs" role="tablist" aria-label="实例用量范围">
+          {assetUsageRanges.map((range) => (
+            <button
+              key={range}
+              type="button"
+              className={usageRange === range ? "active" : ""}
+              onClick={() => setUsageRange(range)}
+            >
+              {usageRangeLabel(range, resolvedLocale)}
+            </button>
+          ))}
+        </div>
       </div>
 
       {query.isLoading ? (
@@ -157,11 +186,11 @@ export function AssetsPage() {
               <tr>
                 <th />
                 <th>{t("assets.name")}</th>
-                <th>{t("assets.provider")}</th>
-                <th>{t("assets.kind")}</th>
-                <th>{t("assets.capabilities")}</th>
-                <th>{t("assets.balance")}</th>
+                <th>{isEN ? "Upstream / Kind" : "上游 / 类型"}</th>
+                <th>{isEN ? "Group / Rate" : "分组 / 倍率"}</th>
+                <th>{isEN ? "Usage today" : "今日用量"}</th>
                 <th>{t("assets.quota")}</th>
+                <th>{t("assets.balance")}</th>
                 <th>{t("assets.monthlyCost")}</th>
                 <th>{t("assets.lastScan")}</th>
                 <th>{t("assets.risk")}</th>
@@ -174,6 +203,8 @@ export function AssetsPage() {
                   <AssetGroupRow
                     group={group}
                     locale={resolvedLocale}
+                    usageSummary={usageMap.get(group.instanceId)}
+                    usageRange={usageRange}
                     collapsed={collapsedGroups[group.instanceId] ?? false}
                     onToggle={() => toggleGroup(group.instanceId)}
                     onViewUser={
@@ -184,7 +215,15 @@ export function AssetsPage() {
                     t={t}
                   />
                   {!(collapsedGroups[group.instanceId] ?? false) &&
-                    group.childItems.map((row) => (
+                    group.watchItems.length > 0 && (
+                      <WatchPanelRow
+                        items={group.watchItems}
+                        locale={resolvedLocale}
+                        onView={(id) => setSelectedId(id)}
+                      />
+                    )}
+                  {!(collapsedGroups[group.instanceId] ?? false) &&
+                    group.assetItems.map((row) => (
                       <AssetRow
                         key={row.id}
                         row={row}
@@ -221,6 +260,8 @@ type AssetGroup = {
   providerKind: ProviderKind;
   userTarget?: MonitorTarget;
   childItems: MonitorTarget[];
+  assetItems: MonitorTarget[];
+  watchItems: MonitorTarget[];
   items: MonitorTarget[];
 };
 
@@ -240,6 +281,8 @@ function groupTargets(
         providerKind:
           instanceMap.get(key)?.providerKind ?? item.providerKind ?? "generic_http",
         childItems: [],
+        assetItems: [],
+        watchItems: [],
         items: [],
       });
     }
@@ -262,6 +305,12 @@ function groupTargets(
         childItems: userTarget
           ? group.items.filter((item) => item.id !== userTarget.id)
           : group.items,
+        watchItems: group.items.filter(
+          (item) => item.id !== userTarget?.id && isWatchKind(item.kind),
+        ),
+        assetItems: group.items.filter(
+          (item) => item.id !== userTarget?.id && !isWatchKind(item.kind),
+        ),
       };
     })
     .filter(Boolean);
@@ -270,6 +319,8 @@ function groupTargets(
 function AssetGroupRow({
   group,
   locale,
+  usageSummary,
+  usageRange,
   collapsed,
   onToggle,
   onViewUser,
@@ -277,6 +328,8 @@ function AssetGroupRow({
 }: {
   group: AssetGroup;
   locale: string;
+  usageSummary?: InstanceUsageSummary;
+  usageRange: InstanceUsageRange;
   collapsed: boolean;
   onToggle: () => void;
   onViewUser?: () => void;
@@ -289,12 +342,12 @@ function AssetGroupRow({
   const isEN = locale === "en";
   const summaryTarget = group.userTarget ?? first;
   const isRelay = isRelayProvider(provider);
-  const apiKeys = group.childItems.filter((item) => item.kind === "api_key").length;
-  const watchAssets = group.childItems.filter((item) => isWatchKind(item.kind)).length;
+  const apiKeys = group.assetItems.filter((item) => item.kind === "api_key").length;
+  const watchAssets = group.watchItems.length;
   const childLabel = isRelay
     ? `${apiKeys} API Key${watchAssets ? ` · ${watchAssets} ${isEN ? "watchers" : "观察资产"}` : ""}`
     : `${group.childItems.length} ${isEN ? "assets" : "个资产"}`;
-  const metrics = group.userTarget
+  const baseMetrics = group.userTarget
     ? relayUserMetrics(group.userTarget, locale)
     : compactMetrics(
         [
@@ -315,8 +368,29 @@ function AssetGroupRow({
               }
             : undefined,
         ],
-        3,
+        4,
       );
+  const metrics = compactMetrics(
+    [
+      ...baseMetrics,
+      usageSummary?.cost
+        ? {
+            label:
+              usageRangeLabel(usageRange, locale) +
+              (isEN ? " usage" : "用量"),
+            value: formatMoney(usageSummary.cost),
+            tone: "warn" as const,
+          }
+        : undefined,
+      usageSummary && usageSummary.requests > 0
+        ? {
+            label: isEN ? "Requests" : "请求数",
+            value: formatNumber(usageSummary.requests),
+          }
+        : undefined,
+    ],
+    5,
+  );
   return (
     <tr className="asset-group-row">
       <td colSpan={11}>
@@ -383,6 +457,9 @@ function AssetRow({
   scanning: boolean;
   t: (k: string) => string;
 }) {
+  const raw = rawPayload(row);
+  const groupRate = groupRateSummary(row, raw, locale);
+  const todayUsage = todayUsageFact(row, raw, locale);
   return (
     <tr className="asset-child-row">
       <td>
@@ -410,15 +487,31 @@ function AssetRow({
           <div className="text-xs text-text-4 mono">{row.keyFingerprint}</div>
         )}
         <ApiKeyFacts row={row} locale={locale} />
-        <WatchFacts row={row} locale={locale} />
       </td>
-      <td>{providerLabel(row.providerKind, t)}</td>
-      <td>{t(`targetKind.${row.kind}`)}</td>
       <td>
-        <div className="flex flex-wrap gap-1">
-          {row.capabilities.map((c) => (
-            <CapabilityBadge key={c} label={capabilityLabel(c, t)} />
-          ))}
+        <div className="asset-value-cell">
+          <span>{providerLabel(row.providerKind, t)}</span>
+          <small>{t(`targetKind.${row.kind}`)}</small>
+        </div>
+      </td>
+      <td>
+        <div className="asset-value-cell">
+          <span>{groupRate.primary}</span>
+          <small>{groupRate.secondary}</small>
+        </div>
+      </td>
+      <td>
+        <div className="asset-value-cell">
+          <span className="mono">{todayUsage.primary}</span>
+          <small>{todayUsage.secondary}</small>
+        </div>
+      </td>
+      <td>
+        <div className="asset-value-cell">
+          <span className="mono">{formatAssetQuota(row, locale)}</span>
+          {planExpiryText(row, locale) && (
+            <small>{planExpiryText(row, locale)}</small>
+          )}
         </div>
       </td>
       <td>
@@ -428,14 +521,6 @@ function AssetRow({
             <small>
               {locale === "en" ? "Upstream user balance" : "上游用户余额"}
             </small>
-          )}
-        </div>
-      </td>
-      <td>
-        <div className="asset-value-cell">
-          <span className="mono">{formatAssetQuota(row, locale)}</span>
-          {planExpiryText(row, locale) && (
-            <small>{planExpiryText(row, locale)}</small>
           )}
         </div>
       </td>
@@ -454,6 +539,145 @@ function AssetRow({
       </td>
     </tr>
   );
+}
+
+function WatchPanelRow({
+  items,
+  locale,
+  onView,
+}: {
+  items: MonitorTarget[];
+  locale: string;
+  onView: (id: string) => void;
+}) {
+  const isEN = locale === "en";
+  return (
+    <tr className="asset-watch-row">
+      <td />
+      <td colSpan={10}>
+        <div className="watch-source-grid">
+          {sortWatchItems(items).map((row) => {
+            const raw = row.raw ?? {};
+            const watchItems = Array.isArray(raw.items) ? raw.items : [];
+            const first = watchItems[0] as Record<string, unknown> | undefined;
+            const label = watchLabel(row.kind, locale);
+            const title =
+              stringFromRaw(first ?? {}, ["title", "name"]) ??
+              stringFromRaw(raw, ["summary"]) ??
+              (isEN ? "Waiting for first scan" : "等待首次扫描");
+            const source =
+              stringFromRaw(raw, ["sourceUrl", "source"]) ??
+              row.externalId ??
+              "—";
+            const fingerprint = stringFromRaw(raw, ["fingerprint"]);
+            const checkedAt = stringFromRaw(raw, ["checkedAt"]);
+            return (
+              <article className="watch-source-card" key={row.id}>
+                <div className="watch-source-top">
+                  <div>
+                    <span className="watch-source-kind">{label}</span>
+                    <strong>{title}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    className="mini-link-button"
+                    onClick={() => onView(row.id)}
+                  >
+                    {isEN ? "Details" : "详情"}
+                  </button>
+                </div>
+                {row.kind === "announcement_feed" && watchItems.length > 0 ? (
+                  <div className="watch-history-list">
+                    {watchItems.slice(0, 4).map((item, index) => {
+                      const entry = item as Record<string, unknown>;
+                      const entryTitle =
+                        stringFromRaw(entry, ["title", "name"]) ??
+                        (isEN ? "Untitled announcement" : "未命名公告");
+                      const entrySummary = stringFromRaw(entry, [
+                        "summary",
+                        "content",
+                        "description",
+                        "text",
+                      ]);
+                      const entryTime = dateFromRaw(
+                        entry,
+                        ["date", "created_at", "createdAt", "updated_at", "updatedAt"],
+                        locale,
+                      );
+                      return (
+                        <div className="watch-history-item" key={`${entryTitle}-${index}`}>
+                          <div>
+                            <strong>{entryTitle}</strong>
+                            {entrySummary && <p>{compactText(entrySummary, 92)}</p>}
+                          </div>
+                          {entryTime && <small>{entryTime}</small>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="watch-source-summary">{compactText(String(title), 140)}</p>
+                )}
+                <div className="watch-source-meta">
+                  <span>{isEN ? "Items" : "条目"} {watchItems.length || stringFromRaw(raw, ["count"]) || 0}</span>
+                  {checkedAt && <span>{formatDate(checkedAt, locale)}</span>}
+                  {fingerprint && <span className="mono">Hash {fingerprint.slice(0, 10)}</span>}
+                </div>
+                <div className="watch-source-url mono">{source}</div>
+              </article>
+            );
+          })}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function usageRangeLabel(range: InstanceUsageRange, locale: string) {
+  const isEN = locale === "en";
+  const labels: Record<InstanceUsageRange, string> = {
+    today: isEN ? "Today" : "今日",
+    "24h": isEN ? "24H" : "24小时",
+    "7d": isEN ? "7D" : "7天",
+    "30d": isEN ? "30D" : "30天",
+  };
+  return labels[range];
+}
+
+function sortWatchItems(items: MonitorTarget[]) {
+  const order: Record<string, number> = {
+    announcement_feed: 0,
+    news_feed: 1,
+    deprecation_feed: 2,
+    group_catalog: 3,
+    model_catalog: 4,
+    pricing_catalog: 5,
+  };
+  return [...items].sort(
+    (a, b) =>
+      (order[a.kind] ?? 99) - (order[b.kind] ?? 99) ||
+      a.name.localeCompare(b.name),
+  );
+}
+
+function watchLabel(kind: string, locale: string) {
+  const isEN = locale === "en";
+  const labels: Record<string, [string, string]> = {
+    announcement_feed: ["上游公告", "Announcements"],
+    news_feed: ["官方新闻", "News"],
+    deprecation_feed: ["模型下架", "Deprecations"],
+    group_catalog: ["分组倍率", "Groups & rates"],
+    model_catalog: ["模型目录", "Models"],
+    pricing_catalog: ["价格目录", "Pricing"],
+  };
+  const label = labels[kind];
+  return label ? (isEN ? label[1] : label[0]) : kind;
+}
+
+function compactText(value: string, max: number) {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 1))}…`;
 }
 
 function assetKindHint(
@@ -594,9 +818,12 @@ function ApiKeyFacts({
   };
 
   addFact(isEN ? "Key" : "密钥", maskSecret(stringFromRaw(raw, ["key", "api_key", "apiKey", "token"])));
-  addFact(isEN ? "Group" : "上游分组", stringFromRaw(raw, ["group", "group_name", "groupName"]));
+  addFact(isEN ? "Group" : "上游分组", groupNameFromRaw(row, raw));
+  addFact(isEN ? "Rate" : "倍率", rateFact(raw, locale));
   addFact(isEN ? "Limit" : "额度限制", quotaFact(row, raw, locale));
   addFact(isEN ? "Used" : "已用", usageFact(row, raw, locale));
+  addFact(isEN ? "Today" : "今日", dailyUsageFact(row, raw, locale));
+  addFact(isEN ? "Requests" : "请求数", requestFact(raw, locale));
   addFact(isEN ? "Models" : "模型", listFromRaw(raw, ["models", "model", "model_limits", "modelLimits"]));
   addFact(isEN ? "IP" : "IP 限制", listFromRaw(raw, ["ip_whitelist", "ipWhitelist", "allow_ips", "allowIps", "ip_limit", "ipLimit"]));
   addFact(isEN ? "Expires" : "过期时间", expiryFact(row, raw, locale));
@@ -615,42 +842,6 @@ function ApiKeyFacts({
   );
 }
 
-function WatchFacts({
-  row,
-  locale,
-}: {
-  row: MonitorTarget;
-  locale: string;
-}) {
-  if (!isWatchKind(row.kind)) return null;
-  const raw = row.raw ?? {};
-  const items = Array.isArray(raw.items) ? raw.items : [];
-  const first = items[0] as Record<string, unknown> | undefined;
-  const title = stringFromRaw(first ?? {}, ["title", "name"]) ??
-    stringFromRaw(raw, ["summary"]) ??
-    (locale === "en" ? "Waiting for first scan" : "等待首次扫描");
-  const source = stringFromRaw(raw, ["sourceUrl", "source"]) ?? "—";
-  const fingerprint = stringFromRaw(raw, ["fingerprint"]);
-  return (
-    <div className="asset-fact-strip watch-fact-strip">
-      <span className="asset-fact wide">
-        <small>{locale === "en" ? "Latest" : "最新"}</small>
-        <strong>{title}</strong>
-      </span>
-      <span className="asset-fact wide">
-        <small>{locale === "en" ? "Source" : "来源"}</small>
-        <strong className="mono">{source}</strong>
-      </span>
-      {fingerprint && (
-        <span className="asset-fact">
-          <small>Hash</small>
-          <strong className="mono">{fingerprint.slice(0, 10)}</strong>
-        </span>
-      )}
-    </div>
-  );
-}
-
 function quotaFact(row: MonitorTarget, raw: Record<string, unknown>, locale: string) {
   if (boolFromRaw(raw, ["unlimited_quota", "unlimitedQuota", "unlimited"])) {
     return locale === "en" ? "Unlimited" : "无限制";
@@ -663,9 +854,187 @@ function quotaFact(row: MonitorTarget, raw: Record<string, unknown>, locale: str
     : undefined;
 }
 
+function groupRateSummary(
+  row: MonitorTarget,
+  raw: Record<string, unknown>,
+  locale: string,
+) {
+  const isEN = locale === "en";
+  const group = groupNameFromRaw(row, raw);
+  const rate = rateFact(raw, locale);
+  return {
+    primary: group ?? "—",
+    secondary: rate
+      ? `${isEN ? "Rate" : "倍率"} ${rate}`
+      : isEN
+        ? "No upstream rate"
+        : "上游未返回倍率",
+  };
+}
+
+function todayUsageFact(
+  row: MonitorTarget,
+  raw: Record<string, unknown>,
+  locale: string,
+) {
+  const isEN = locale === "en";
+  const daily = dailyUsageFact(row, raw, locale);
+  const requests = requestFact(raw, locale, [
+    "today_requests",
+    "todayRequests",
+    "daily_requests",
+    "dailyRequests",
+    "today_request_count",
+    "todayRequestCount",
+  ]);
+  if (daily) {
+    return {
+      primary: daily,
+      secondary: requests ?? (isEN ? "Today from upstream" : "上游今日返回"),
+    };
+  }
+  if (row.monthlyCost) {
+    return {
+      primary: formatMoney(row.monthlyCost),
+      secondary: requests ?? (isEN ? "Accumulated usage" : "累计用量"),
+    };
+  }
+  if (requests) {
+    return {
+      primary: requests,
+      secondary: isEN ? "Request count" : "请求数",
+    };
+  }
+  return {
+    primary: "—",
+    secondary: isEN ? "No daily usage" : "上游未返回今日用量",
+  };
+}
+
+function dailyUsageFact(
+  row: MonitorTarget,
+  raw: Record<string, unknown>,
+  locale: string,
+) {
+  const money = formatRawMoney(raw, [
+    "today_actual_cost",
+    "todayActualCost",
+    "today_cost",
+    "todayCost",
+    "daily_actual_cost",
+    "dailyActualCost",
+    "daily_cost",
+    "dailyCost",
+    "today_usage_usd",
+    "todayUsageUsd",
+    "daily_usage_usd",
+    "dailyUsageUsd",
+    "today_amount",
+    "todayAmount",
+  ]);
+  if (money) return money;
+  const quota = numberFromRaw(raw, [
+    "today_used_quota",
+    "todayUsedQuota",
+    "today_usage",
+    "todayUsage",
+    "daily_usage",
+    "dailyUsage",
+    "daily_used",
+    "dailyUsed",
+  ]);
+  if (typeof quota === "number") {
+    return `${formatNumber(quota)} ${locale === "en" ? "quota" : "额度"}`;
+  }
+  if (
+    row.kind === "api_key" &&
+    row.monthlyCost &&
+    !hasAnyRawNumber(raw, [
+      "monthly_cost",
+      "monthlyCost",
+      "month_cost",
+      "monthCost",
+      "usage_cost",
+      "usageCost",
+      "total_cost",
+      "totalCost",
+    ])
+  ) {
+    return formatMoney(row.monthlyCost);
+  }
+  return undefined;
+}
+
+function rateFact(raw: Record<string, unknown>, locale: string) {
+  const value = numberFromRaw(raw, [
+    "ratio",
+    "rate",
+    "group_ratio",
+    "groupRatio",
+    "group_rate",
+    "groupRate",
+    "channel_rate",
+    "channelRate",
+    "multiplier",
+    "model_ratio",
+    "modelRatio",
+    "quota_multiplier",
+    "quotaMultiplier",
+  ]);
+  const nestedValue = numberFromRaw(objectFromRaw(raw, ["group"]), [
+    "rate_multiplier",
+    "rateMultiplier",
+    "rate",
+    "ratio",
+    "multiplier",
+  ]);
+  const finalValue = typeof value === "number" ? value : nestedValue;
+  if (typeof finalValue !== "number") {
+    return stringFromRaw(raw, ["ratio", "rate", "multiplier"]);
+  }
+  const suffix = locale === "en" ? "x" : "倍";
+  return `${formatNumber(finalValue)}${suffix}`;
+}
+
+function requestFact(
+  raw: Record<string, unknown>,
+  locale: string,
+  extraKeys: string[] = [],
+) {
+  const value = numberFromRaw(raw, [
+    ...extraKeys,
+    "request_count",
+    "requestCount",
+    "requests",
+    "total_requests",
+    "totalRequests",
+    "api_requests",
+    "apiRequests",
+    "request_num",
+    "requestNum",
+  ]);
+  if (typeof value !== "number") return undefined;
+  return `${formatNumber(value)} ${locale === "en" ? "req" : "次"}`;
+}
+
 function usageFact(row: MonitorTarget, raw: Record<string, unknown>, locale: string) {
   if (row.monthlyCost) return formatMoney(row.monthlyCost);
-  if (row.providerKind === "newapi_user") {
+  if (row.providerKind === "newapi_user" || row.providerKind === "sub2api_user") {
+    const relayMoney = formatRawMoney(raw, [
+      "monthly_cost",
+      "monthlyCost",
+      "month_cost",
+      "monthCost",
+      "usage_cost",
+      "usageCost",
+      "total_cost",
+      "totalCost",
+      "used_amount",
+      "usedAmount",
+      "used_usd",
+      "usedUSD",
+    ]);
+    if (relayMoney) return relayMoney;
     return formatQuotaAsMoney(raw, ["used_quota", "usedQuota", "used"]);
   }
   const used = numberFromRaw(raw, ["used_quota", "usedQuota", "used", "usage", "used_amount"]);
@@ -774,6 +1143,49 @@ function boolFromRaw(raw: Record<string, unknown>, keys: string[]) {
   return false;
 }
 
+function objectFromRaw(
+  raw: Record<string, unknown>,
+  keys: string[],
+): Record<string, unknown> {
+  for (const key of keys) {
+    const value = raw[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+  }
+  return {};
+}
+
+function groupNameFromRaw(
+  row: MonitorTarget,
+  raw: Record<string, unknown>,
+): string | undefined {
+  const direct =
+    row.groupName ??
+    stringFromRaw(raw, [
+      "group_name",
+      "groupName",
+      "channel_group",
+      "channelGroup",
+      "default_group",
+      "defaultGroup",
+    ]);
+  if (direct) return direct;
+  const groupObject = objectFromRaw(raw, ["group"]);
+  const nested = stringFromRaw(groupObject, [
+    "name",
+    "display_name",
+    "displayName",
+    "title",
+    "slug",
+  ]);
+  if (nested) return nested;
+  const group = raw.group;
+  if (typeof group === "string" && group.trim()) return group.trim();
+  const groupId = stringFromRaw(raw, ["group_id", "groupId"]);
+  return groupId ? `Group ${groupId}` : undefined;
+}
+
 function formatQuotaAsMoney(
   raw: Record<string, unknown>,
   keys: string[],
@@ -788,6 +1200,29 @@ function formatQuotaAsMoney(
   const currency = stringFromRaw(raw, ["currency", "balance_currency"]) ?? "USD";
   const amount = value / (scale && scale > 0 ? scale : 500000);
   return formatMoney({ amount, currency });
+}
+
+function formatRawMoney(
+  raw: Record<string, unknown>,
+  keys: string[],
+): string | undefined {
+  const value = numberFromRaw(raw, keys);
+  if (typeof value !== "number") return undefined;
+  const currency =
+    stringFromRaw(raw, [
+      "currency",
+      "balance_currency",
+      "balanceCurrency",
+      "monthly_cost_currency",
+      "monthlyCostCurrency",
+      "cost_currency",
+      "costCurrency",
+    ]) ?? "USD";
+  return formatMoney({ amount: value, currency });
+}
+
+function hasAnyRawNumber(raw: Record<string, unknown>, keys: string[]) {
+  return typeof numberFromRaw(raw, keys) === "number";
 }
 
 function listFromRaw(

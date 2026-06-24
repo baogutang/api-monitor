@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -27,12 +30,24 @@ type DashboardSummary struct {
 	ActiveChannels   int           `json:"activeChannels"`
 	AlertingChannels int           `json:"alertingChannels"`
 	Alerts24h        int           `json:"alerts24h"`
+	OpenAlerts       int           `json:"openAlerts"`
+	CriticalAlerts   int           `json:"criticalAlerts"`
+	RiskTargets      int           `json:"riskTargets"`
 }
 
 type DashboardTrendPoint struct {
 	CapturedAt time.Time     `json:"capturedAt"`
 	Balance    *domain.Money `json:"balance,omitempty"`
 	Cost       *domain.Money `json:"cost,omitempty"`
+}
+
+type InstanceUsageSummary struct {
+	InstanceID string        `json:"instanceId"`
+	Range      string        `json:"range"`
+	Cost       *domain.Money `json:"cost,omitempty"`
+	Requests   int64         `json:"requests"`
+	StartedAt  time.Time     `json:"startedAt"`
+	EndedAt    time.Time     `json:"endedAt"`
 }
 
 func (s *Store) CreateScanRun(ctx context.Context, targetID, instanceID string) (*domain.ScanRun, error) {
@@ -141,7 +156,7 @@ func (s *Store) DashboardSummary(ctx context.Context) (DashboardSummary, error) 
 		LIMIT 1
 	`).Scan(&totalBalanceCurrency, &totalBalanceAmount)
 	if totalBalanceAmount.Valid {
-		summary.TotalBalance = &domain.Money{Amount: totalBalanceAmount.Float64, Currency: firstNonEmpty(totalBalanceCurrency.String, "USD")}
+		summary.TotalBalance = roundedMoney(totalBalanceAmount.Float64, firstNonEmpty(totalBalanceCurrency.String, "USD"))
 	}
 	var monthlyCostAmount sql.NullFloat64
 	var monthlyCostCurrency sql.NullString
@@ -172,7 +187,7 @@ func (s *Store) DashboardSummary(ctx context.Context) (DashboardSummary, error) 
 		LIMIT 1
 	`).Scan(&monthlyCostCurrency, &monthlyCostAmount)
 	if monthlyCostAmount.Valid {
-		summary.MonthlyCost = &domain.Money{Amount: monthlyCostAmount.Float64, Currency: firstNonEmpty(monthlyCostCurrency.String, "USD")}
+		summary.MonthlyCost = roundedMoney(monthlyCostAmount.Float64, firstNonEmpty(monthlyCostCurrency.String, "USD"))
 	}
 	var todayCostAmount sql.NullFloat64
 	var todayCostCurrency sql.NullString
@@ -206,7 +221,7 @@ func (s *Store) DashboardSummary(ctx context.Context) (DashboardSummary, error) 
 				mt.instance_id,
 				mt.kind,
 				lt.monthly_cost_currency AS currency,
-				GREATEST(lt.monthly_cost_amount - COALESCE(p.monthly_cost_amount, et.monthly_cost_amount), 0) AS amount
+				GREATEST(lt.monthly_cost_amount - COALESCE(p.monthly_cost_amount, 0), 0) AS amount
 			FROM latest_today lt
 			JOIN earliest_today et ON et.target_id = lt.target_id
 			LEFT JOIN previous p ON p.target_id = lt.target_id
@@ -235,20 +250,37 @@ func (s *Store) DashboardSummary(ctx context.Context) (DashboardSummary, error) 
 		LIMIT 1
 	`).Scan(&todayCostCurrency, &todayCostAmount)
 	if todayCostAmount.Valid {
-		summary.TodayCost = &domain.Money{Amount: todayCostAmount.Float64, Currency: firstNonEmpty(todayCostCurrency.String, "USD")}
+		summary.TodayCost = roundedMoney(todayCostAmount.Float64, firstNonEmpty(todayCostCurrency.String, "USD"))
 	}
 	var atRisk sql.NullFloat64
+	var atRiskCurrency sql.NullString
 	_ = s.db.QueryRow(ctx, `
-		SELECT sum(balance_amount)
+		SELECT balance_currency, sum(balance_amount)
 		FROM monitor_targets
 		WHERE kind IN ('user','subscription')
 			AND status IN ('warning','critical')
 			AND balance_amount IS NOT NULL
-	`).Scan(&atRisk)
+		GROUP BY balance_currency
+		ORDER BY sum(balance_amount) DESC
+		LIMIT 1
+	`).Scan(&atRiskCurrency, &atRisk)
 	if atRisk.Valid {
-		summary.AtRiskBalance = &domain.Money{Amount: atRisk.Float64, Currency: "USD"}
+		summary.AtRiskBalance = roundedMoney(atRisk.Float64, firstNonEmpty(atRiskCurrency.String, "USD"))
 	}
 	_ = s.db.QueryRow(ctx, `SELECT count(*) FROM alert_events WHERE opened_at >= now() - interval '24 hours'`).Scan(&summary.Alerts24h)
+	_ = s.db.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE status IN ('open','acknowledged','silenced')),
+			count(*) FILTER (WHERE status IN ('open','acknowledged','silenced') AND severity IN ('critical','phone'))
+		FROM alert_events
+	`).Scan(&summary.OpenAlerts, &summary.CriticalAlerts)
+	_ = s.db.QueryRow(ctx, `
+		SELECT count(*)
+		FROM monitor_targets
+		WHERE enabled = TRUE
+			AND kind IN ('user','subscription','api_key')
+			AND status IN ('warning','critical')
+	`).Scan(&summary.RiskTargets)
 	return summary, nil
 }
 
@@ -343,6 +375,268 @@ func dashboardTrendBucket(bucket string) string {
 	default:
 		return "date_trunc('hour', bs.captured_at)"
 	}
+}
+
+func (s *Store) InstanceUsageSummaries(ctx context.Context, rangeID string) ([]InstanceUsageSummary, error) {
+	rangeID, since, until := normalizeUsageRange(rangeID)
+	rows, err := s.db.Query(ctx, `
+		WITH previous AS (
+			SELECT DISTINCT ON (target_id)
+				target_id, monthly_cost_amount, raw
+			FROM balance_snapshots
+			WHERE captured_at < $1
+			ORDER BY target_id, captured_at DESC
+		)
+		SELECT
+			mt.instance_id,
+			mt.kind,
+			mt.monthly_cost_amount,
+			mt.monthly_cost_currency,
+			mt.raw,
+			previous.monthly_cost_amount,
+			previous.raw
+		FROM monitor_targets mt
+		LEFT JOIN previous ON previous.target_id = mt.id
+		WHERE mt.enabled = TRUE
+			AND mt.kind IN ('user','subscription','api_key')
+	`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type bucket struct {
+		hasParentCost     bool
+		hasParentRequests bool
+		parentCost        float64
+		childCost         float64
+		parentRequests    int64
+		childRequests     int64
+		currency          string
+	}
+	buckets := map[string]*bucket{}
+	for rows.Next() {
+		var instanceID string
+		var kind domain.TargetKind
+		var currentCost, previousCost sql.NullFloat64
+		var currentCurrency sql.NullString
+		var currentRaw, previousRaw json.RawMessage
+		if err := rows.Scan(&instanceID, &kind, &currentCost, &currentCurrency, &currentRaw, &previousCost, &previousRaw); err != nil {
+			return nil, err
+		}
+		currentCostValue, costOK := costValue(currentCost, currentRaw)
+		previousCostValue := 0.0
+		if previousCost.Valid {
+			previousCostValue = previousCost.Float64
+		} else if value, ok := rawNumber(previousRaw, usageCostKeys()...); ok {
+			previousCostValue = value
+		}
+		costDelta := 0.0
+		if costOK {
+			costDelta = currentCostValue - previousCostValue
+			if costDelta < 0 {
+				costDelta = 0
+			}
+		}
+
+		currentRequests, requestOK := rawNumber(currentRaw, requestCountKeys()...)
+		previousRequests := 0.0
+		if value, ok := rawNumber(previousRaw, requestCountKeys()...); ok {
+			previousRequests = value
+		}
+		requestDelta := int64(0)
+		if requestOK {
+			delta := currentRequests - previousRequests
+			if delta > 0 {
+				requestDelta = int64(math.Round(delta))
+			}
+		}
+
+		entry := buckets[instanceID]
+		if entry == nil {
+			entry = &bucket{}
+			buckets[instanceID] = entry
+		}
+		if entry.currency == "" {
+			entry.currency = firstNonEmpty(currentCurrency.String, rawCurrency(currentRaw), "USD")
+		}
+		if kind == domain.TargetUser || kind == domain.TargetSubscription {
+			if costOK {
+				entry.hasParentCost = true
+				entry.parentCost += costDelta
+			}
+			if requestOK {
+				entry.hasParentRequests = true
+				entry.parentRequests += requestDelta
+			}
+			continue
+		}
+		entry.childCost += costDelta
+		entry.childRequests += requestDelta
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]InstanceUsageSummary, 0, len(buckets))
+	for instanceID, entry := range buckets {
+		amount := entry.childCost
+		if entry.hasParentCost {
+			amount = entry.parentCost
+		}
+		requests := entry.childRequests
+		if entry.hasParentRequests {
+			requests = entry.parentRequests
+		}
+		summary := InstanceUsageSummary{
+			InstanceID: instanceID,
+			Range:      rangeID,
+			Requests:   requests,
+			StartedAt:  since,
+			EndedAt:    until,
+		}
+		if amount > 0 {
+			summary.Cost = roundedMoney(amount, firstNonEmpty(entry.currency, "USD"))
+		}
+		out = append(out, summary)
+	}
+	return out, nil
+}
+
+func normalizeUsageRange(rangeID string) (string, time.Time, time.Time) {
+	now := time.Now().UTC()
+	switch rangeID {
+	case "today":
+		return "today", time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC), now
+	case "7d":
+		return "7d", now.Add(-7 * 24 * time.Hour), now
+	case "30d":
+		return "30d", now.Add(-30 * 24 * time.Hour), now
+	default:
+		return "24h", now.Add(-24 * time.Hour), now
+	}
+}
+
+func costValue(column sql.NullFloat64, raw json.RawMessage) (float64, bool) {
+	if column.Valid {
+		return column.Float64, true
+	}
+	if value, ok := rawNumber(raw, usageCostKeys()...); ok {
+		return value, true
+	}
+	return 0, false
+}
+
+func usageCostKeys() []string {
+	return []string{
+		"monthly_cost",
+		"monthlyCost",
+		"month_cost",
+		"monthCost",
+		"usage_cost",
+		"usageCost",
+		"total_cost",
+		"totalCost",
+		"used_amount",
+		"usedAmount",
+		"used_usd",
+		"usedUSD",
+	}
+}
+
+func requestCountKeys() []string {
+	return []string{
+		"request_count",
+		"requestCount",
+		"requests",
+		"total_requests",
+		"totalRequests",
+		"api_requests",
+		"apiRequests",
+		"request_num",
+		"requestNum",
+	}
+}
+
+func rawCurrency(raw json.RawMessage) string {
+	if value, ok := rawStringValue(raw, "currency", "balance_currency", "monthly_cost_currency"); ok {
+		return value
+	}
+	return ""
+}
+
+func rawNumber(raw json.RawMessage, keys ...string) (float64, bool) {
+	values := rawLookupMaps(raw)
+	for _, object := range values {
+		for _, key := range keys {
+			value, ok := object[key]
+			if !ok {
+				continue
+			}
+			switch typed := value.(type) {
+			case float64:
+				if math.IsNaN(typed) || math.IsInf(typed, 0) {
+					continue
+				}
+				return typed, true
+			case int:
+				return float64(typed), true
+			case int64:
+				return float64(typed), true
+			case json.Number:
+				if parsed, err := typed.Float64(); err == nil {
+					return parsed, true
+				}
+			case string:
+				if parsed, err := strconvParseFloat(typed); err == nil {
+					return parsed, true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+func rawStringValue(raw json.RawMessage, keys ...string) (string, bool) {
+	values := rawLookupMaps(raw)
+	for _, object := range values {
+		for _, key := range keys {
+			value, ok := object[key]
+			if !ok {
+				continue
+			}
+			if text, ok := value.(string); ok && text != "" {
+				return text, true
+			}
+		}
+	}
+	return "", false
+}
+
+func rawLookupMaps(raw json.RawMessage) []map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil
+	}
+	out := []map[string]any{root}
+	if data, ok := root["data"].(map[string]any); ok {
+		out = append(out, data)
+	}
+	if payload, ok := root["payload"].(map[string]any); ok {
+		out = append(out, payload)
+	}
+	return out
+}
+
+func strconvParseFloat(value string) (float64, error) {
+	return strconv.ParseFloat(strings.TrimSpace(value), 64)
+}
+
+func roundedMoney(amount float64, currency string) *domain.Money {
+	return &domain.Money{Amount: math.Round(amount*100) / 100, Currency: firstNonEmpty(currency, "USD")}
 }
 
 func firstNonEmpty(values ...string) string {

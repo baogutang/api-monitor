@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 
 	"api-monitor/internal/domain"
 )
@@ -14,7 +15,9 @@ type sub2APIUserConnector struct {
 }
 
 var sub2APIKeyListPaths = []string{
+	"/api/v1/keys?page=1&page_size=100",
 	"/api/v1/keys",
+	"/api/v1/api-keys?page=1&page_size=100",
 	"/api/v1/api-keys",
 	"/api/v1/user/api-keys",
 	"/api/v1/user/keys",
@@ -67,20 +70,21 @@ func (c *sub2APIUserConnector) Discover(ctx context.Context, instance domain.Ins
 			obj := objectFromAny(item)
 			key := stringFromJSON(obj, "key", "api_key", "apiKey", "token", "value")
 			name := firstNonEmpty(stringFromJSON(obj, "name", "label", "title", "remark", "description"), "API Key")
+			groupName, _ := sub2APIKeyGroupInfo(obj)
 			targets = append(targets, domain.MonitorTarget{
 				InstanceID:     instance.ID,
 				ProviderKind:   instance.ProviderKind,
 				Kind:           domain.TargetAPIKey,
 				Name:           name,
 				ExternalID:     firstNonEmpty(stringFromJSON(obj, "id", "key_id", "keyId", "uuid"), keyFingerprint(key), name),
-				GroupName:      firstNonEmpty(stringFromJSON(obj, "group_name", "groupName", "group"), instance.GroupName),
+				GroupName:      firstNonEmpty(groupName, instance.GroupName),
 				KeyFingerprint: keyFingerprint(key),
 				Capabilities:   capabilities(domain.CapabilityUsage, domain.CapabilityHealth),
 				Status:         domain.StatusUnknown,
-				Quota:          inferQuota(obj),
+				Quota:          sub2APIKeyQuota(obj),
 				Plan:           parsePlan(obj),
 				MonthlyCost:    inferMonthlyCost(obj),
-				Raw:            makeRaw(obj),
+				Raw:            sub2APIKeyRaw(obj, nil),
 				Enabled:        true,
 			})
 		}
@@ -130,13 +134,14 @@ func (c *sub2APIUserConnector) Scan(ctx context.Context, instance domain.Instanc
 			err := errors.New("synchronized Sub2Api key was not found; sync monitored assets again")
 			return &domain.ScanResult{Status: domain.StatusWarning, Error: err.Error(), Raw: raw}, err
 		}
+		dailyRaw := sub2APIKeyDailyUsageRaw(ctx, c.client, root, headers, stringFromJSON(obj, "id", "key_id", "keyId"))
 		return &domain.ScanResult{
 			Status:       domain.StatusHealthy,
-			Quota:        inferQuota(obj),
+			Quota:        sub2APIKeyQuota(obj),
 			Plan:         parsePlan(obj),
 			MonthlyCost:  inferMonthlyCost(obj),
 			Capabilities: capabilities(domain.CapabilityUsage, domain.CapabilityHealth),
-			Raw:          mergeRaw(makeRaw(obj), map[string]any{"source": "sub2api_api_key"}),
+			Raw:          sub2APIKeyRaw(obj, dailyRaw),
 		}, nil
 	}
 
@@ -236,6 +241,121 @@ func matchSub2APIKeyTarget(items []any, target domain.MonitorTarget) map[string]
 		}
 	}
 	return nil
+}
+
+func sub2APIKeyGroupInfo(obj map[string]any) (string, *float64) {
+	group := objectFromAny(obj["group"])
+	name := firstNonEmpty(
+		stringFromJSON(obj, "group_name", "groupName", "group"),
+		stringFromJSON(group, "name", "display_name", "displayName", "title", "slug"),
+	)
+	if name == "" {
+		if id := stringFromJSON(obj, "group_id", "groupId"); id != "" && id != "0" {
+			name = "Group " + id
+		}
+	}
+	rate := floatFromJSON(obj, "group_rate", "groupRate", "rate_multiplier", "rateMultiplier", "rate", "ratio", "multiplier")
+	if rate == nil {
+		rate = floatFromJSON(group, "rate_multiplier", "rateMultiplier", "rate", "ratio", "multiplier")
+	}
+	return name, rate
+}
+
+func sub2APIKeyQuota(obj map[string]any) *domain.Quota {
+	quota := inferQuota(obj)
+	if quota == nil {
+		return nil
+	}
+	if quota.Unit == "quota" {
+		quota.Unit = "USD"
+	}
+	if quota.Total != nil && *quota.Total == 0 {
+		quota.Total = nil
+		quota.Remaining = nil
+	}
+	return quota
+}
+
+func sub2APIKeyRaw(obj map[string]any, dailyRaw json.RawMessage) json.RawMessage {
+	extras := map[string]any{"source": "sub2api_api_key"}
+	groupName, groupRate := sub2APIKeyGroupInfo(obj)
+	if groupName != "" {
+		extras["groupName"] = groupName
+		extras["group_name"] = groupName
+	}
+	if groupRate != nil {
+		extras["groupRate"] = *groupRate
+		extras["group_rate"] = *groupRate
+	}
+	if len(dailyRaw) > 0 {
+		daily := unwrapData(dailyRaw)
+		extras["dailyUsage"] = daily
+		if today := sub2APITodayUsage(daily); len(today) > 0 {
+			for key, value := range today {
+				extras[key] = value
+			}
+		}
+	}
+	return mergeRaw(makeRaw(obj), extras)
+}
+
+func sub2APIKeyDailyUsageRaw(ctx context.Context, client *http.Client, root string, headers map[string]string, keyID string) json.RawMessage {
+	if keyID == "" {
+		return nil
+	}
+	path := "/api/v1/user/api-keys/" + url.PathEscape(keyID) + "/usage/daily?days=30"
+	raw, _, err := requestJSON(ctx, client, http.MethodGet, joinURL(root, path), headers, nil)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+func sub2APITodayUsage(value any) map[string]any {
+	root := objectFromAny(value)
+	items := arrayFromAny(root["items"])
+	if len(items) == 0 {
+		items = arrayFromAny(value)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	today := ""
+	for _, item := range items {
+		obj := objectFromAny(item)
+		if date := stringFromJSON(obj, "date"); date > today {
+			today = date
+		}
+	}
+	if today == "" {
+		return nil
+	}
+	var cost, actualCost, requests, tokens float64
+	for _, item := range items {
+		obj := objectFromAny(item)
+		if stringFromJSON(obj, "date") != today {
+			continue
+		}
+		if value := floatFromJSON(obj, "cost"); value != nil {
+			cost += *value
+		}
+		if value := floatFromJSON(obj, "actual_cost", "actualCost"); value != nil {
+			actualCost += *value
+		}
+		if value := floatFromJSON(obj, "requests"); value != nil {
+			requests += *value
+		}
+		if value := floatFromJSON(obj, "total_tokens", "totalTokens", "tokens"); value != nil {
+			tokens += *value
+		}
+	}
+	return map[string]any{
+		"today_date":        today,
+		"today_cost":        cost,
+		"today_actual_cost": actualCost,
+		"today_requests":    requests,
+		"today_tokens":      tokens,
+	}
 }
 
 func sub2APIKeyObjectMatchesTarget(obj map[string]any, target domain.MonitorTarget) bool {

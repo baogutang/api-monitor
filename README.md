@@ -271,11 +271,28 @@ gh repo edit baogutang/api-monitor \
 
 - 构建 Linux / macOS 二进制包
 - 构建并推送多架构 Docker 镜像到 GHCR
-- 生成 GitHub Release
+- 生成以部署和升级为主的 GitHub Release 说明
 
 ```bash
-git tag v1.1.1
-git push origin v1.1.1
+VERSION=vX.Y.Z
+git tag "${VERSION}"
+git push origin "${VERSION}"
+```
+
+Release 页面会展示：
+
+- Docker 镜像地址和支持架构
+- Docker Compose 首次部署步骤
+- 已有部署升级步骤
+- 二进制包文件说明
+- 版本检查、自更新和回滚说明
+
+发布后 Docker 用户通常只需要更新 `.env` 中的镜像 tag：
+
+```bash
+API_MONITOR_IMAGE=ghcr.io/baogutang/api-monitor:vX.Y.Z
+docker compose -f docker-compose.release.yml pull api worker
+docker compose -f docker-compose.release.yml up -d
 ```
 
 ## 安全说明
