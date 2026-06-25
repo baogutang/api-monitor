@@ -737,6 +737,8 @@ function compactMetrics(
 function relayUserMetrics(row: MonitorTarget, locale: string): AssetMetric[] {
   const raw = rawPayload(row);
   const isEN = locale === "en";
+  const today = usageSummaryRange(raw, "today");
+  const month = usageSummaryRange(raw, "30d");
   const balance =
     row.balance != null
       ? formatMoney(row.balance)
@@ -748,7 +750,8 @@ function relayUserMetrics(row: MonitorTarget, locale: string): AssetMetric[] {
           "quota",
         ]);
   const spent =
-    row.monthlyCost != null
+    formatUsageRangeMoney(month, raw) ??
+    (row.monthlyCost != null
       ? formatMoney(row.monthlyCost)
       : formatQuotaAsMoney(raw, [
           "used_quota",
@@ -757,8 +760,8 @@ function relayUserMetrics(row: MonitorTarget, locale: string): AssetMetric[] {
           "used_amount",
           "usage_cost",
           "total_cost",
-        ]);
-  const requests = numberFromRaw(raw, [
+        ]));
+  const requests = numberFromRaw(today, ["requests", "totalRequests"]) ?? numberFromRaw(month, ["requests", "totalRequests"]) ?? numberFromRaw(raw, [
     "request_count",
     "requestCount",
     "requests",
@@ -916,6 +919,8 @@ function dailyUsageFact(
   raw: Record<string, unknown>,
   locale: string,
 ) {
+  const summaryMoney = formatUsageRangeMoney(usageSummaryRange(raw, "today"), raw);
+  if (summaryMoney) return summaryMoney;
   const money = formatRawMoney(raw, [
     "today_actual_cost",
     "todayActualCost",
@@ -1001,7 +1006,8 @@ function requestFact(
   locale: string,
   extraKeys: string[] = [],
 ) {
-  const value = numberFromRaw(raw, [
+  const summaryToday = usageSummaryRange(raw, "today");
+  const value = numberFromRaw(summaryToday, ["requests", "totalRequests"]) ?? numberFromRaw(raw, [
     ...extraKeys,
     "request_count",
     "requestCount",
@@ -1018,6 +1024,8 @@ function requestFact(
 }
 
 function usageFact(row: MonitorTarget, raw: Record<string, unknown>, locale: string) {
+  const summaryMoney = formatUsageRangeMoney(usageSummaryRange(raw, "30d"), raw);
+  if (summaryMoney) return summaryMoney;
   if (row.monthlyCost) return formatMoney(row.monthlyCost);
   if (row.providerKind === "newapi_user" || row.providerKind === "sub2api_user") {
     const relayMoney = formatRawMoney(raw, [
@@ -1096,9 +1104,28 @@ function rawPayload(row?: MonitorTarget): Record<string, unknown> {
   const root = raw as Record<string, unknown>;
   const data = root.data;
   if (data && typeof data === "object" && !Array.isArray(data)) {
-    return data as Record<string, unknown>;
+    return { ...(data as Record<string, unknown>), ...root };
   }
   return root;
+}
+
+function usageSummaryRange(
+  raw: Record<string, unknown>,
+  range: InstanceUsageRange | "total" | "5h",
+): Record<string, unknown> {
+  const summary = objectFromRaw(raw, ["usageSummary", "usage_summary"]);
+  const ranges = objectFromRaw(summary, ["ranges"]);
+  const value = ranges[range];
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (range === "24h") {
+    const today = ranges.today;
+    if (today && typeof today === "object" && !Array.isArray(today)) {
+      return today as Record<string, unknown>;
+    }
+  }
+  return {};
 }
 
 function stringFromRaw(
@@ -1218,6 +1245,29 @@ function formatRawMoney(
       "cost_currency",
       "costCurrency",
     ]) ?? "USD";
+  return formatMoney({ amount: value, currency });
+}
+
+function formatUsageRangeMoney(
+  raw: Record<string, unknown>,
+  fallbackRaw: Record<string, unknown>,
+): string | undefined {
+  const value = numberFromRaw(raw, [
+    "actualCost",
+    "actual_cost",
+    "cost",
+    "totalActualCost",
+    "total_actual_cost",
+    "totalCost",
+    "total_cost",
+  ]);
+  if (typeof value !== "number") return undefined;
+  const currency =
+    stringFromRaw(raw, ["currency"]) ??
+    stringFromRaw(objectFromRaw(fallbackRaw, ["usageSummary", "usage_summary"]), [
+      "currency",
+    ]) ??
+    "USD";
   return formatMoney({ amount: value, currency });
 }
 

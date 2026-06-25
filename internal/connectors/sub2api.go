@@ -48,7 +48,8 @@ func (c *sub2APIUserConnector) Discover(ctx context.Context, instance domain.Ins
 	user := objectFromAny(unwrapData(raw))
 	quotaRaw, _, _ := requestJSON(ctx, c.client, http.MethodGet, joinURL(root, "/api/v1/user/platform-quotas"), headers, nil)
 	windows := usageWindowsFromSub2Quota(quotaRaw)
-	rawWithWindows := mergeRaw(raw, map[string]any{"usageWindows": windows, "source": "sub2api_user"})
+	usageSummary := sub2APIUserUsageSummary(ctx, c.client, root, headers)
+	rawWithWindows := mergeRaw(raw, map[string]any{"usageWindows": windows, "usageSummary": usageSummary, "source": "sub2api_user"})
 	targets := []domain.MonitorTarget{{
 		InstanceID:   instance.ID,
 		ProviderKind: instance.ProviderKind,
@@ -61,30 +62,43 @@ func (c *sub2APIUserConnector) Discover(ctx context.Context, instance domain.Ins
 		Balance:      inferBalance(user),
 		Quota:        firstQuota(inferQuota(user), quotaFromUsageWindows(windows)),
 		Plan:         parsePlan(user),
-		MonthlyCost:  inferMonthlyCost(user),
+		MonthlyCost:  firstMoney(usageSummaryCost(usageSummary, "30d"), inferMonthlyCost(user)),
 		Raw:          rawWithWindows,
 		Enabled:      true,
 	}}
 	if keysRaw, _, keyErr := requestFirstJSON(ctx, c.client, http.MethodGet, root, sub2APIKeyListPaths, headers, nil); keyErr == nil {
-		for _, item := range sub2APIKeyItems(keysRaw) {
+		keyItems := sub2APIKeyItems(keysRaw)
+		keyIDs := make([]string, 0, len(keyItems))
+		for _, item := range keyItems {
+			obj := objectFromAny(item)
+			if id := sub2APIKeyID(obj); id != "" {
+				keyIDs = append(keyIDs, id)
+			}
+		}
+		batchUsage := sub2APIBatchUsageByID(sub2APIBatchAPIKeyUsageRaw(ctx, c.client, root, headers, keyIDs))
+		for _, item := range keyItems {
 			obj := objectFromAny(item)
 			key := stringFromJSON(obj, "key", "api_key", "apiKey", "token", "value")
 			name := firstNonEmpty(stringFromJSON(obj, "name", "label", "title", "remark", "description"), "API Key")
 			groupName, _ := sub2APIKeyGroupInfo(obj)
+			id := firstNonEmpty(sub2APIKeyID(obj), keyFingerprint(key), name)
+			dailyRaw := sub2APIKeyDailyUsageRaw(ctx, c.client, root, headers, id)
+			keyRaw := sub2APIKeyRaw(obj, dailyRaw, batchUsage[id])
+			keyUsageSummary := objectFromAny(rawObject(keyRaw)["usageSummary"])
 			targets = append(targets, domain.MonitorTarget{
 				InstanceID:     instance.ID,
 				ProviderKind:   instance.ProviderKind,
 				Kind:           domain.TargetAPIKey,
 				Name:           name,
-				ExternalID:     firstNonEmpty(stringFromJSON(obj, "id", "key_id", "keyId", "uuid"), keyFingerprint(key), name),
+				ExternalID:     id,
 				GroupName:      firstNonEmpty(groupName, instance.GroupName),
 				KeyFingerprint: keyFingerprint(key),
 				Capabilities:   capabilities(domain.CapabilityUsage, domain.CapabilityHealth),
 				Status:         domain.StatusUnknown,
 				Quota:          sub2APIKeyQuota(obj),
 				Plan:           parsePlan(obj),
-				MonthlyCost:    inferMonthlyCost(obj),
-				Raw:            sub2APIKeyRaw(obj, nil),
+				MonthlyCost:    usageSummaryCost(keyUsageSummary, "30d"),
+				Raw:            keyRaw,
 				Enabled:        true,
 			})
 		}
@@ -134,36 +148,53 @@ func (c *sub2APIUserConnector) Scan(ctx context.Context, instance domain.Instanc
 			err := errors.New("synchronized Sub2Api key was not found; sync monitored assets again")
 			return &domain.ScanResult{Status: domain.StatusWarning, Error: err.Error(), Raw: raw}, err
 		}
-		dailyRaw := sub2APIKeyDailyUsageRaw(ctx, c.client, root, headers, stringFromJSON(obj, "id", "key_id", "keyId"))
+		keyID := sub2APIKeyID(obj)
+		dailyRaw := sub2APIKeyDailyUsageRaw(ctx, c.client, root, headers, keyID)
+		batchUsage := sub2APIBatchUsageByID(sub2APIBatchAPIKeyUsageRaw(ctx, c.client, root, headers, []string{keyID}))
+		keyRaw := sub2APIKeyRaw(obj, dailyRaw, batchUsage[keyID])
+		keyUsageSummary := objectFromAny(rawObject(keyRaw)["usageSummary"])
 		return &domain.ScanResult{
 			Status:       domain.StatusHealthy,
 			Quota:        sub2APIKeyQuota(obj),
 			Plan:         parsePlan(obj),
-			MonthlyCost:  inferMonthlyCost(obj),
+			MonthlyCost:  usageSummaryCost(keyUsageSummary, "30d"),
 			Capabilities: capabilities(domain.CapabilityUsage, domain.CapabilityHealth),
-			Raw:          sub2APIKeyRaw(obj, dailyRaw),
+			Raw:          keyRaw,
 		}, nil
 	}
 
-	path := "/api/v1/auth/me"
 	if target.Kind == domain.TargetSubscription {
-		path = "/api/v1/subscriptions/progress"
+		raw, _, err := requestJSON(ctx, c.client, http.MethodGet, joinURL(root, "/api/v1/subscriptions/progress"), headers, nil)
+		if err != nil {
+			return &domain.ScanResult{Status: flexibleStatus(err), Error: err.Error(), Raw: raw}, err
+		}
+		obj := objectFromAny(unwrapData(raw))
+		return &domain.ScanResult{
+			Status:       domain.StatusHealthy,
+			Balance:      inferBalance(obj),
+			Quota:        inferQuota(obj),
+			Plan:         parsePlan(obj),
+			MonthlyCost:  inferMonthlyCost(obj),
+			Capabilities: capabilities(domain.CapabilityUsage, domain.CapabilityHealth, domain.CapabilityManualPlan),
+			Raw:          makeRaw(obj),
+		}, nil
 	}
-	raw, _, err := requestJSON(ctx, c.client, http.MethodGet, joinURL(root, path), headers, nil)
+	raw, _, err := requestFirstJSON(ctx, c.client, http.MethodGet, root, []string{"/api/v1/auth/me", "/api/v1/users/me", "/api/v1/user/profile"}, headers, nil)
 	if err != nil {
 		return &domain.ScanResult{Status: flexibleStatus(err), Error: err.Error(), Raw: raw}, err
 	}
 	obj := objectFromAny(unwrapData(raw))
 	quotaRaw, _, _ := requestJSON(ctx, c.client, http.MethodGet, joinURL(root, "/api/v1/user/platform-quotas"), headers, nil)
 	windows := usageWindowsFromSub2Quota(quotaRaw)
+	usageSummary := sub2APIUserUsageSummary(ctx, c.client, root, headers)
 	return &domain.ScanResult{
 		Status:       domain.StatusHealthy,
 		Balance:      inferBalance(obj),
 		Quota:        firstQuota(inferQuota(obj), quotaFromUsageWindows(windows)),
 		Plan:         parsePlan(obj),
-		MonthlyCost:  inferMonthlyCost(obj),
+		MonthlyCost:  firstMoney(usageSummaryCost(usageSummary, "30d"), inferMonthlyCost(obj)),
 		Capabilities: capabilities(domain.CapabilityUsage, domain.CapabilityHealth, domain.CapabilityManualPlan, domain.CapabilityWindowQuota),
-		Raw:          mergeRaw(raw, map[string]any{"usageWindows": windows, "source": "sub2api_user"}),
+		Raw:          mergeRaw(raw, map[string]any{"usageWindows": windows, "usageSummary": usageSummary, "source": "sub2api_user"}),
 	}, nil
 }
 
@@ -276,7 +307,7 @@ func sub2APIKeyQuota(obj map[string]any) *domain.Quota {
 	return quota
 }
 
-func sub2APIKeyRaw(obj map[string]any, dailyRaw json.RawMessage) json.RawMessage {
+func sub2APIKeyRaw(obj map[string]any, dailyRaw json.RawMessage, batchUsage map[string]any) json.RawMessage {
 	extras := map[string]any{"source": "sub2api_api_key"}
 	groupName, groupRate := sub2APIKeyGroupInfo(obj)
 	if groupName != "" {
@@ -296,6 +327,17 @@ func sub2APIKeyRaw(obj map[string]any, dailyRaw json.RawMessage) json.RawMessage
 			}
 		}
 	}
+	if len(batchUsage) > 0 {
+		extras["batchUsage"] = batchUsage
+		if value := firstFloatFromJSON(batchUsage, "today_actual_cost", "todayActualCost"); value != nil {
+			extras["today_actual_cost"] = *value
+		}
+		if value := firstFloatFromJSON(batchUsage, "total_actual_cost", "totalActualCost"); value != nil {
+			extras["total_actual_cost"] = *value
+			extras["monthly_cost"] = *value
+		}
+	}
+	extras["usageSummary"] = sub2APIKeyUsageSummary(dailyRaw, batchUsage)
 	return mergeRaw(makeRaw(obj), extras)
 }
 
@@ -359,7 +401,7 @@ func sub2APITodayUsage(value any) map[string]any {
 }
 
 func sub2APIKeyObjectMatchesTarget(obj map[string]any, target domain.MonitorTarget) bool {
-	id := stringFromJSON(obj, "id", "key_id", "keyId", "uuid")
+	id := sub2APIKeyID(obj)
 	if id != "" && id == target.ExternalID {
 		return true
 	}
@@ -369,6 +411,10 @@ func sub2APIKeyObjectMatchesTarget(obj map[string]any, target domain.MonitorTarg
 	}
 	name := stringFromJSON(obj, "name", "label", "title", "remark", "description")
 	return name != "" && name == target.Name
+}
+
+func sub2APIKeyID(obj map[string]any) string {
+	return stringFromJSON(obj, "id", "key_id", "keyId", "uuid")
 }
 
 func sub2APIKeyItems(raw json.RawMessage) []any {

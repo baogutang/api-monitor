@@ -40,8 +40,44 @@ func TestNewAPIUserScanAPIKeyMatchesTokenList(t *testing.T) {
 					"unit":       "quota",
 				}},
 			})
+		case "/api/token/980/key":
+			if got := r.Header.Get("Authorization"); got != "Bearer user-token" {
+				t.Fatalf("Authorization header for full key = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"key": "sk-full-secret-980",
+				},
+			})
 		case "/api/usage/token/":
-			t.Fatalf("New API user child key scan should not call token usage with a masked key")
+			if got := r.Header.Get("Authorization"); got != "Bearer sk-full-secret-980" {
+				t.Fatalf("token usage should use full key, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"object":          "token_usage",
+					"name":            "work-key",
+					"total_granted":   100,
+					"total_used":      25,
+					"total_available": 75,
+				},
+			})
+		case "/api/log/self/stat":
+			if got := r.Header.Get("Authorization"); got != "Bearer user-token" {
+				t.Fatalf("Authorization header for token stat = %q", got)
+			}
+			if got := r.URL.Query().Get("token_name"); got != "work-key" {
+				t.Fatalf("token_name query = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"quota": 15,
+					"rpm":   0,
+					"tpm":   0,
+				},
+			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

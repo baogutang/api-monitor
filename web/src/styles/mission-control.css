@@ -703,10 +703,10 @@ textarea.input {
 
 .filter-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(150px, 190px) minmax(
-      180px,
-      240px
-    );
+  grid-template-columns:
+    minmax(220px, 1fr) minmax(150px, 190px) minmax(180px, 240px)
+    auto;
+  align-items: center;
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -2856,9 +2856,16 @@ textarea.input {
   }
 
   .data-table-wrap {
+    max-width: 100%;
     margin-right: -6px;
     margin-left: -6px;
     border-radius: 12px;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .data-table {
+    min-width: 920px;
   }
 
   .asset-group-card {
@@ -2893,6 +2900,42 @@ textarea.input {
 
   .auth-card {
     padding: 30px 26px;
+  }
+}
+
+@media (max-width: 480px) {
+  .app:not(.nav-expanded) {
+    --sidebar-w: 50px;
+  }
+
+  .main {
+    padding: 12px 10px 20px;
+  }
+
+  .topbar-actions,
+  .table-action-row,
+  .asset-group-meta,
+  .asset-fact-strip {
+    gap: 5px;
+  }
+
+  .btn,
+  .status-pill,
+  .asset-range-tabs button {
+    min-height: 34px;
+  }
+
+  .asset-group-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .asset-fact,
+  .asset-fact.wide {
+    max-width: 100%;
+  }
+
+  .asset-fact strong {
+    white-space: normal;
   }
 }
 

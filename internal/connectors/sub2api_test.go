@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"api-monitor/internal/domain"
 )
@@ -36,6 +37,54 @@ func TestSub2APIUserDiscoversAndScansUserKeys(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{"platform_quotas": []any{}},
 			})
+		case "/api/v1/usage/dashboard/stats":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"today_requests":      7,
+					"today_actual_cost":   0.31,
+					"total_requests":      15,
+					"total_actual_cost":   1.23,
+					"total_api_keys":      1,
+					"active_api_keys":     1,
+					"average_duration_ms": 120,
+				},
+			})
+		case "/api/v1/usage/stats":
+			period := r.URL.Query().Get("period")
+			actualCost := map[string]float64{"today": 0.31, "week": 0.62, "month": 1.23}[period]
+			if actualCost == 0 {
+				actualCost = 0.31
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"total_requests":    7,
+					"total_actual_cost": actualCost,
+					"total_tokens":      1024,
+				},
+			})
+		case "/api/v1/usage/dashboard/trend":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"trend": []any{}},
+			})
+		case "/api/v1/usage/dashboard/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"models": []any{}},
+			})
+		case "/api/v1/usage/dashboard/api-keys-usage":
+			if got := r.Header.Get("Authorization"); got != "Bearer sub2-user-token" {
+				t.Fatalf("Authorization header = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"stats": map[string]any{
+						"12": map[string]any{
+							"api_key_id":        12,
+							"today_actual_cost": 0.31,
+							"total_actual_cost": 1.23,
+						},
+					},
+				},
+			})
 		case "/api/v1/keys":
 			if got := r.Header.Get("Authorization"); got != "Bearer sub2-user-token" {
 				t.Fatalf("Authorization header = %q", got)
@@ -65,7 +114,7 @@ func TestSub2APIUserDiscoversAndScansUserKeys(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{
 					"items": []map[string]any{{
-						"date":         "2026-06-24",
+						"date":         time.Now().UTC().Format("2006-01-02"),
 						"requests":     7,
 						"total_tokens": 1024,
 						"cost":         0.42,

@@ -40,6 +40,11 @@ func (c *newAPIUserConnector) Discover(ctx context.Context, instance domain.Inst
 		return nil, err
 	}
 	user := objectFromAny(unwrapData(raw))
+	usageSummary := newAPIUserUsageSummary(ctx, c.client, baseURL(instance, ""), headers)
+	userRaw := mergeRaw(raw, map[string]any{
+		"source":       "newapi_user",
+		"usageSummary": usageSummary,
+	})
 	targets := []domain.MonitorTarget{{
 		InstanceID:   instance.ID,
 		ProviderKind: instance.ProviderKind,
@@ -52,8 +57,8 @@ func (c *newAPIUserConnector) Discover(ctx context.Context, instance domain.Inst
 		Balance:      newAPIBalance(user),
 		Quota:        inferQuota(user),
 		Plan:         parsePlan(user),
-		MonthlyCost:  newAPIQuotaMoney(user, "used_quota", "usedQuota", "used"),
-		Raw:          raw,
+		MonthlyCost:  usageSummaryCost(usageSummary, "30d"),
+		Raw:          userRaw,
 		Enabled:      true,
 	}}
 	tokenRaw, _, tokenErr := requestJSON(ctx, c.client, http.MethodGet, joinURL(baseURL(instance, ""), "/api/token/"), headers, nil)
@@ -62,6 +67,8 @@ func (c *newAPIUserConnector) Discover(ctx context.Context, instance domain.Inst
 			obj := objectFromAny(item)
 			name := firstNonEmpty(stringFromJSON(obj, "name", "key", "id"), "API Key")
 			key := stringFromJSON(obj, "key", "token")
+			keyRaw := newAPITokenRaw(ctx, c.client, baseURL(instance, ""), headers, obj)
+			keyUsageSummary := objectFromAny(rawObject(keyRaw)["usageSummary"])
 			targets = append(targets, domain.MonitorTarget{
 				InstanceID:     instance.ID,
 				ProviderKind:   instance.ProviderKind,
@@ -74,8 +81,8 @@ func (c *newAPIUserConnector) Discover(ctx context.Context, instance domain.Inst
 				Status:         domain.StatusUnknown,
 				Quota:          newAPITokenQuota(obj),
 				Plan:           parsePlan(obj),
-				MonthlyCost:    newAPIQuotaMoney(obj, "used_quota", "usedQuota", "used"),
-				Raw:            makeRaw(obj),
+				MonthlyCost:    usageSummaryCost(keyUsageSummary, "30d"),
+				Raw:            keyRaw,
 				Enabled:        true,
 			})
 		}
@@ -110,13 +117,15 @@ func (c *newAPIUserConnector) Scan(ctx context.Context, instance domain.Instance
 			err := errMissingTargetToken()
 			return &domain.ScanResult{Status: domain.StatusWarning, Error: err.Error(), Raw: raw}, err
 		}
+		keyRaw := newAPITokenRaw(ctx, c.client, baseURL(instance, ""), headers, obj)
+		keyUsageSummary := objectFromAny(rawObject(keyRaw)["usageSummary"])
 		return &domain.ScanResult{
 			Status:       domain.StatusHealthy,
 			Quota:        newAPITokenQuota(obj),
 			Plan:         parsePlan(obj),
-			MonthlyCost:  newAPIQuotaMoney(obj, "used_quota", "usedQuota", "used"),
+			MonthlyCost:  usageSummaryCost(keyUsageSummary, "30d"),
 			Capabilities: capabilities(domain.CapabilityUsage, domain.CapabilityHealth),
-			Raw:          mergeRaw(makeRaw(obj), map[string]any{"source": "newapi_api_key"}),
+			Raw:          keyRaw,
 		}, nil
 	}
 
@@ -129,14 +138,15 @@ func (c *newAPIUserConnector) Scan(ctx context.Context, instance domain.Instance
 		return &domain.ScanResult{Status: flexibleStatus(err), Error: err.Error(), Raw: raw}, err
 	}
 	obj := objectFromAny(unwrapData(raw))
+	usageSummary := newAPIUserUsageSummary(ctx, c.client, baseURL(instance, ""), headers)
 	return &domain.ScanResult{
 		Status:       domain.StatusHealthy,
 		Balance:      newAPIBalance(obj),
 		Quota:        inferQuota(obj),
 		Plan:         parsePlan(obj),
-		MonthlyCost:  newAPIQuotaMoney(obj, "used_quota", "usedQuota", "used"),
+		MonthlyCost:  usageSummaryCost(usageSummary, "30d"),
 		Capabilities: capabilities(domain.CapabilityUsage, domain.CapabilityHealth),
-		Raw:          raw,
+		Raw:          mergeRaw(raw, map[string]any{"source": "newapi_user", "usageSummary": usageSummary}),
 	}, nil
 }
 
@@ -209,6 +219,15 @@ func marshalRaw(value any) json.RawMessage {
 
 func errMissingTargetToken() error {
 	return errors.New("synchronized New API key was not found; sync monitored assets again")
+}
+
+func firstMoney(values ...*domain.Money) *domain.Money {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 func matchNewAPITokenTarget(items []any, target domain.MonitorTarget) map[string]any {

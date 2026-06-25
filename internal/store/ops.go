@@ -252,6 +252,16 @@ func (s *Store) DashboardSummary(ctx context.Context) (DashboardSummary, error) 
 	if todayCostAmount.Valid {
 		summary.TodayCost = roundedMoney(todayCostAmount.Float64, firstNonEmpty(todayCostCurrency.String, "USD"))
 	}
+	if usageSummaries, err := s.InstanceUsageSummaries(ctx, "today"); err == nil {
+		if cost := sumInstanceUsageCosts(usageSummaries); cost != nil {
+			summary.TodayCost = cost
+		}
+	}
+	if usageSummaries, err := s.InstanceUsageSummaries(ctx, "30d"); err == nil {
+		if cost := sumInstanceUsageCosts(usageSummaries); cost != nil {
+			summary.MonthlyCost = cost
+		}
+	}
 	var atRisk sql.NullFloat64
 	var atRiskCurrency sql.NullString
 	_ = s.db.QueryRow(ctx, `
@@ -407,6 +417,7 @@ func (s *Store) InstanceUsageSummaries(ctx context.Context, rangeID string) ([]I
 
 	type bucket struct {
 		hasParentCost     bool
+		hasChildCost      bool
 		hasParentRequests bool
 		parentCost        float64
 		childCost         float64
@@ -425,8 +436,16 @@ func (s *Store) InstanceUsageSummaries(ctx context.Context, rangeID string) ([]I
 			return nil, err
 		}
 		currentCostValue, costOK := costValue(currentCost, currentRaw)
+		if value, currency, ok := usageSummaryCostFromRaw(currentRaw, rangeID); ok {
+			currentCostValue = value
+			currentCurrency.String = currency
+			currentCurrency.Valid = currency != ""
+			costOK = true
+		}
 		previousCostValue := 0.0
-		if previousCost.Valid {
+		if _, _, ok := usageSummaryCostFromRaw(currentRaw, rangeID); ok {
+			previousCostValue = 0
+		} else if previousCost.Valid {
 			previousCostValue = previousCost.Float64
 		} else if value, ok := rawNumber(previousRaw, usageCostKeys()...); ok {
 			previousCostValue = value
@@ -440,8 +459,14 @@ func (s *Store) InstanceUsageSummaries(ctx context.Context, rangeID string) ([]I
 		}
 
 		currentRequests, requestOK := rawNumber(currentRaw, requestCountKeys()...)
+		if value, ok := usageSummaryRequestsFromRaw(currentRaw, rangeID); ok {
+			currentRequests = value
+			requestOK = true
+		}
 		previousRequests := 0.0
-		if value, ok := rawNumber(previousRaw, requestCountKeys()...); ok {
+		if _, ok := usageSummaryRequestsFromRaw(currentRaw, rangeID); ok {
+			previousRequests = 0
+		} else if value, ok := rawNumber(previousRaw, requestCountKeys()...); ok {
 			previousRequests = value
 		}
 		requestDelta := int64(0)
@@ -471,7 +496,10 @@ func (s *Store) InstanceUsageSummaries(ctx context.Context, rangeID string) ([]I
 			}
 			continue
 		}
-		entry.childCost += costDelta
+		if costOK {
+			entry.hasChildCost = true
+			entry.childCost += costDelta
+		}
 		entry.childRequests += requestDelta
 	}
 	if err := rows.Err(); err != nil {
@@ -495,12 +523,35 @@ func (s *Store) InstanceUsageSummaries(ctx context.Context, rangeID string) ([]I
 			StartedAt:  since,
 			EndedAt:    until,
 		}
-		if amount > 0 {
+		if amount > 0 || entry.hasParentCost || entry.hasChildCost {
 			summary.Cost = roundedMoney(amount, firstNonEmpty(entry.currency, "USD"))
 		}
 		out = append(out, summary)
 	}
 	return out, nil
+}
+
+func sumInstanceUsageCosts(items []InstanceUsageSummary) *domain.Money {
+	var amount float64
+	currency := ""
+	found := false
+	for _, item := range items {
+		if item.Cost == nil {
+			continue
+		}
+		if currency == "" {
+			currency = item.Cost.Currency
+		}
+		if item.Cost.Currency != "" && currency != item.Cost.Currency {
+			continue
+		}
+		amount += item.Cost.Amount
+		found = true
+	}
+	if !found {
+		return nil
+	}
+	return roundedMoney(amount, firstNonEmpty(currency, "USD"))
 }
 
 func normalizeUsageRange(rangeID string) (string, time.Time, time.Time) {
@@ -629,6 +680,108 @@ func rawLookupMaps(raw json.RawMessage) []map[string]any {
 		out = append(out, payload)
 	}
 	return out
+}
+
+func usageSummaryCostFromRaw(raw json.RawMessage, rangeID string) (float64, string, bool) {
+	for _, summary := range usageSummaryObjects(raw) {
+		rangeObj := usageSummaryRange(summary, rangeID)
+		if len(rangeObj) == 0 {
+			continue
+		}
+		if value, ok := firstRawNumber(rangeObj, "actualCost", "actual_cost", "cost", "totalActualCost", "total_actual_cost", "totalCost", "total_cost"); ok {
+			currency, _ := firstRawString(rangeObj, "currency")
+			if currency == "" {
+				currency, _ = firstRawString(summary, "currency")
+			}
+			return value, firstNonEmpty(currency, "USD"), true
+		}
+	}
+	return 0, "", false
+}
+
+func usageSummaryRequestsFromRaw(raw json.RawMessage, rangeID string) (float64, bool) {
+	for _, summary := range usageSummaryObjects(raw) {
+		rangeObj := usageSummaryRange(summary, rangeID)
+		if len(rangeObj) == 0 {
+			continue
+		}
+		if value, ok := firstRawNumber(rangeObj, "requests", "totalRequests", "total_requests", "request_count", "requestCount"); ok {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+func usageSummaryObjects(raw json.RawMessage) []map[string]any {
+	var out []map[string]any
+	for _, object := range rawLookupMaps(raw) {
+		if summary := rawMap(object["usageSummary"]); len(summary) > 0 {
+			out = append(out, summary)
+		}
+		if summary := rawMap(object["usage_summary"]); len(summary) > 0 {
+			out = append(out, summary)
+		}
+	}
+	return out
+}
+
+func usageSummaryRange(summary map[string]any, rangeID string) map[string]any {
+	ranges := rawMap(summary["ranges"])
+	if len(ranges) == 0 {
+		return nil
+	}
+	if item := rawMap(ranges[rangeID]); len(item) > 0 {
+		return item
+	}
+	if rangeID == "24h" {
+		return rawMap(ranges["today"])
+	}
+	return nil
+}
+
+func rawMap(value any) map[string]any {
+	if object, ok := value.(map[string]any); ok {
+		return object
+	}
+	return nil
+}
+
+func firstRawNumber(object map[string]any, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		value, ok := object[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case float64:
+			if math.IsNaN(typed) || math.IsInf(typed, 0) {
+				continue
+			}
+			return typed, true
+		case int:
+			return float64(typed), true
+		case int64:
+			return float64(typed), true
+		case json.Number:
+			if parsed, err := typed.Float64(); err == nil {
+				return parsed, true
+			}
+		case string:
+			if parsed, err := strconvParseFloat(typed); err == nil {
+				return parsed, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func firstRawString(object map[string]any, keys ...string) (string, bool) {
+	for _, key := range keys {
+		if value, ok := object[key].(string); ok && value != "" {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 func strconvParseFloat(value string) (float64, error) {

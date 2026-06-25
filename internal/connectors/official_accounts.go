@@ -203,6 +203,7 @@ func officialRaw(instance domain.Instance, provider string, windows []map[string
 		"provider":        provider,
 		"account":         officialCredentialMeta(instance),
 		"usageWindows":    windows,
+		"usageSummary":    usageSummaryFromWindows(provider+"_official_account", windows),
 		"credentialHints": officialCredentialHints(instance),
 	}
 	if len(probeRaw) > 0 {
